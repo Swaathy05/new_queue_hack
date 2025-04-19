@@ -82,6 +82,11 @@ class QueueHistory(db.Model):
     status = db.Column(db.String(20), nullable=False)
     delays = db.Column(db.Integer, default=0)
 
+# Create database tables
+with app.app_context():
+    db.create_all()
+    print("Database tables created")
+
 # Helper Functions
 def generate_company_code():
     letters = string.ascii_uppercase

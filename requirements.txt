@@ -1,5 +1,6 @@
 flask==2.3.3
 flask-sqlalchemy==3.0.5
+psycopg2-binary==2.9.9
 flask-socketio==5.3.4
 python-socketio==5.8.0
 gevent==23.9.1
