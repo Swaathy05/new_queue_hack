@@ -140,58 +140,107 @@
 {% block scripts %}
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        // Set up Socket.IO connection for real-time updates
-        const socket = io();
+        // Lazy-load socket.io connection
+        let socket;
         const otp = "{{ customer.otp }}";
+        let updateTimer = null;
+        let connected = false;
         
-        socket.on('connect', function() {
-            // Join the customer's room for personalized updates
-            socket.emit('join_customer_room', { otp: otp });
-            
-            // Also join company room for general updates
-            socket.emit('join_company_room', { company_code: "{{ company.company_code }}" });
-        });
+        // Initialize socket connection when DOM is loaded
+        initSocketConnection();
         
-        // Listen for customer turn notifications
-        socket.on('customer_turn', function(data) {
-            if (data.otp === otp) {
-                // Reload the page to update status
-                window.location.reload();
-            }
-        });
+        // Set up periodic status check as fallback
+        updateTimer = setInterval(checkStatus, 30000);
         
-        // Listen for customer removed notifications
-        socket.on('customer_removed', function(data) {
-            if (data.otp === otp) {
-                // Reload the page to update status
-                window.location.reload();
-            }
-        });
-        
-        // Set up periodic status check
-        function checkStatus() {
-            fetch(`/api/check_status/${otp}`)
-                .then(response => response.json())
-                .then(data => {
-                    // Update position and wait time
-                    document.getElementById('position').textContent = data.position;
+        function initSocketConnection() {
+            // Only create socket connection if needed
+            if (!socket) {
+                socket = io({
+                    transports: ['websocket'], // Force WebSocket for better performance
+                    upgrade: false,            // Prevent transport upgrades
+                    reconnectionAttempts: 3,   // Limit reconnection attempts
+                    timeout: 10000             // Connection timeout
+                });
+                
+                socket.on('connect', function() {
+                    connected = true;
+                    console.log('Socket connected');
                     
-                    // Calculate wait time in minutes
-                    const waitMinutes = Math.round(data.estimated_wait_seconds / 60);
-                    document.getElementById('wait-time').textContent = `${waitMinutes} minutes`;
+                    // Join the customer's room for personalized updates
+                    socket.emit('join_customer_room', { otp: otp });
                     
-                    // Reload page if status has changed
-                    if (data.status !== "{{ customer.status }}") {
+                    // Also join company room for general updates
+                    socket.emit('join_company_room', { company_code: "{{ company.company_code }}" });
+                });
+                
+                socket.on('disconnect', function() {
+                    connected = false;
+                    console.log('Socket disconnected');
+                });
+                
+                // Listen for customer turn notifications
+                socket.on('customer_turn', function(data) {
+                    if (data.otp === otp) {
+                        // Reload the page to update status
                         window.location.reload();
                     }
-                })
-                .catch(error => {
-                    console.error('Error checking status:', error);
                 });
+                
+                // Listen for customer removed notifications
+                socket.on('customer_removed', function(data) {
+                    if (data.otp === otp) {
+                        // Reload the page to update status
+                        window.location.reload();
+                    }
+                });
+                
+                socket.on('connect_error', function() {
+                    console.log('Connection error, falling back to polling');
+                    if (!updateTimer) {
+                        updateTimer = setInterval(checkStatus, 15000);
+                    }
+                });
+            }
         }
         
-        // Check status every 30 seconds
-        setInterval(checkStatus, 30000);
+        // Status check function with optimized implementation
+        function checkStatus() {
+            fetch(`/api/check_status/${otp}`, {
+                headers: { 'Cache-Control': 'no-cache' }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                // Update position and wait time without DOM thrashing
+                const positionElem = document.getElementById('position');
+                const waitTimeElem = document.getElementById('wait-time');
+                
+                if (positionElem) positionElem.textContent = data.position;
+                
+                // Calculate wait time in minutes
+                if (waitTimeElem) {
+                    const waitMinutes = Math.round(data.estimated_wait_seconds / 60);
+                    waitTimeElem.textContent = `${waitMinutes} minutes`;
+                }
+                
+                // Reload page if status has changed
+                if (data.status !== "{{ customer.status }}") {
+                    window.location.reload();
+                }
+            })
+            .catch(error => {
+                console.error('Error checking status:', error);
+                
+                // Try reconnecting socket if we had an error
+                if (!connected && socket) {
+                    initSocketConnection();
+                }
+            });
+        }
     });
 </script>
 {% endblock %}

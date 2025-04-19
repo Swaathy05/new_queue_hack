@@ -1,6 +1,4 @@
-# app_mongodb.py - MongoDB Version of Main Application
-
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, current_app
 from flask_pymongo import PyMongo
 from flask_socketio import SocketIO, emit
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -15,6 +13,7 @@ import csv
 import secrets
 import string
 from functools import wraps
+import time
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -24,12 +23,43 @@ app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your_secret_key_here')
 mongodb_uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/virtual_queue')
 app.config['MONGO_URI'] = mongodb_uri
 
+# Performance settings
+app.config['MONGO_CONNECT'] = False  # Defer connection until first use
+app.config['PYMONGO_CONNECT'] = False  # Same but for PyMongo
+
 # Initialize extensions
 mongo = PyMongo(app)
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
 # Initialize database collections (equivalent to models)
 db = mongo.db
+
+# Simple in-memory cache for frequently accessed data
+cache = {
+    'company_code': {},  # company_code -> company data
+    'cashier_stats': {},  # cashier_id -> queue length
+    'wait_times': {},    # cashier_id -> average wait time
+    'cache_time': {}     # key -> timestamp
+}
+
+# Cache expiry in seconds
+CACHE_EXPIRY = {
+    'company_code': 300,  # 5 minutes
+    'cashier_stats': 10,  # 10 seconds
+    'wait_times': 60     # 1 minute
+}
+
+# Helper function to get cached data or fetch from DB
+def get_cached_or_fetch(cache_key, fetch_func, expiry_category, *args, **kwargs):
+    current_time = time.time()
+    if cache_key in cache[expiry_category] and current_time - cache['cache_time'].get(cache_key, 0) < CACHE_EXPIRY[expiry_category]:
+        return cache[expiry_category][cache_key]
+    
+    # Fetch new data
+    data = fetch_func(*args, **kwargs)
+    cache[expiry_category][cache_key] = data
+    cache['cache_time'][cache_key] = current_time
+    return data
 
 # Ensure indexes for queries
 with app.app_context():
@@ -39,6 +69,10 @@ with app.app_context():
     db.companies.create_index('company_code', unique=True)
     # Create index for otp in customers collection
     db.customers.create_index('otp', unique=True)
+    # Add performance indexes
+    db.cashiers.create_index([('company_id', 1), ('is_active', 1)])
+    db.customers.create_index([('cashier_id', 1), ('status', 1)])
+    db.customers.create_index([('cashier_id', 1), ('status', 1), ('position', 1)])
     print("MongoDB indexes created")
 
 # Helper Functions
@@ -51,19 +85,24 @@ def generate_otp():
     return ''.join(secrets.choice(digits) for _ in range(6))
 
 def calculate_wait_time(cashier_id):
-    customers = list(db.customers.find({'cashier_id': cashier_id, 'status': 'waiting'}).sort('position', 1))
+    # Use cached wait time if available
+    cache_key = f"wait_time_{cashier_id}"
     
-    # Calculate average serving time (default to 3 minutes if not enough data)
-    served_customers = list(db.queue_history.find({'cashier_id': cashier_id, 'wait_time_seconds': {'$exists': True}}))
+    def fetch_wait_time():
+        # Get only the required fields for performance
+        served_customers = list(db.queue_history.find(
+            {'cashier_id': cashier_id, 'wait_time_seconds': {'$exists': True}},
+            {'wait_time_seconds': 1}
+        ).sort('_id', -1).limit(5))
+        
+        if len(served_customers) > 0:
+            avg_serving_time = sum(c.get('wait_time_seconds', 0) for c in served_customers) / len(served_customers)
+        else:
+            avg_serving_time = 180  # 3 minutes default
+        
+        return avg_serving_time
     
-    if len(served_customers) > 5:
-        # Get last 5 customers
-        recent_customers = served_customers[-5:]
-        avg_serving_time = sum(c.get('wait_time_seconds', 0) for c in recent_customers) / 5
-    else:
-        avg_serving_time = 180  # 3 minutes default
-    
-    return avg_serving_time
+    return get_cached_or_fetch(cache_key, fetch_wait_time, 'wait_times')
 
 def login_required(f):
     @wraps(f)
@@ -278,6 +317,11 @@ def toggle_cashier(cashier_id):
         {'$set': {'is_active': new_status}}
     )
     
+    # Clear related caches
+    cache_key = f"cashier_stats_{cashier['company_id']}"
+    if cache_key in cache['cashier_stats']:
+        del cache['cashier_stats'][cache_key]
+    
     # Emit socket event to notify all clients
     socketio.emit('cashier_status_change', {
         'cashier_id': str(cashier_id),
@@ -289,12 +333,29 @@ def toggle_cashier(cashier_id):
 
 @app.route('/queue_status/<otp>')
 def queue_status(otp):
+    # Set cache headers for the browser
+    response = current_app.make_response(render_queue_status(otp))
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
+def render_queue_status(otp):
+    # Optimized function to render queue status
     customer = db.customers.find_one({'otp': otp})
     if not customer:
         return render_template('error.html', message='Queue number not found'), 404
     
-    cashier = db.cashiers.find_one({'_id': ObjectId(customer['cashier_id'])})
-    company = db.companies.find_one({'_id': ObjectId(cashier['company_id'])})
+    # Get only required fields
+    cashier = db.cashiers.find_one(
+        {'_id': ObjectId(customer['cashier_id'])},
+        {'cashier_number': 1, 'company_id': 1}
+    )
+    
+    company = db.companies.find_one(
+        {'_id': ObjectId(cashier['company_id'])},
+        {'name': 1, 'company_code': 1}
+    )
     
     # Calculate estimated wait time
     estimated_wait_seconds = customer['position'] * calculate_wait_time(customer['cashier_id'])
@@ -313,9 +374,9 @@ def check_status(otp):
     if not customer:
         return jsonify({'error': 'Customer not found'}), 404
     
-    cashier = db.cashiers.find_one({'_id': ObjectId(customer['cashier_id'])})
+    cashier = db.cashiers.find_one({'_id': ObjectId(customer['cashier_id'])}, {'cashier_number': 1})
     
-    # Calculate estimated wait time
+    # Calculate estimated wait time - use cached value
     estimated_wait_seconds = customer['position'] * calculate_wait_time(customer['cashier_id'])
     
     # Calculate time since serving started (if applicable)
@@ -323,7 +384,7 @@ def check_status(otp):
     if customer.get('serving_start_time'):
         serving_time_passed = (datetime.utcnow() - customer['serving_start_time']).total_seconds()
     
-    return jsonify({
+    response = jsonify({
         'position': customer['position'],
         'status': customer['status'],
         'cashier_number': cashier['cashier_number'],
@@ -331,41 +392,85 @@ def check_status(otp):
         'serving_time_passed': serving_time_passed,
         'delays': customer.get('delays', 0)
     })
+    
+    # Set cache control headers
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    
+    return response
 
 @app.route('/join/<company_code>')
 def join_queue_page(company_code):
-    company = db.companies.find_one({'company_code': company_code})
+    # Cache company data for frequently accessed companies
+    def fetch_company():
+        return db.companies.find_one({'company_code': company_code})
+    
+    company = get_cached_or_fetch(company_code, fetch_company, 'company_code')
+    
     if not company:
         return render_template('error.html', message='Company not found'), 404
     
-    cashiers = list(db.cashiers.find({'company_id': str(company['_id']), 'is_active': True}))
+    # Get only active cashiers and minimal data needed
+    cashiers = list(db.cashiers.find(
+        {'company_id': str(company['_id']), 'is_active': True},
+        {'cashier_number': 1}
+    ))
     
-    return render_template('join_queue.html', company=company, cashiers=cashiers)
+    response = current_app.make_response(render_template('join_queue.html', company=company, cashiers=cashiers))
+    # Set cache headers for the page
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 @app.route('/api/join_queue/<company_code>', methods=['POST'])
 def join_queue(company_code):
-    company = db.companies.find_one({'company_code': company_code})
+    # Get company from cache if available
+    def fetch_company():
+        return db.companies.find_one({'company_code': company_code})
+    
+    company = get_cached_or_fetch(company_code, fetch_company, 'company_code')
+    
     if not company:
         return jsonify({'error': 'Company not found'}), 404
     
-    # Find the cashier with the shortest queue
-    cashiers = list(db.cashiers.find({'company_id': str(company['_id']), 'is_active': True}))
+    # Find the cashier with the shortest queue - optimize by caching queue lengths
+    cache_key = f"cashier_stats_{company['_id']}"
     
-    if not cashiers:
+    def fetch_cashier_stats():
+        cashiers = list(db.cashiers.find({'company_id': str(company['_id']), 'is_active': True}))
+        
+        if not cashiers:
+            return None
+        
+        stats = {}
+        for cashier in cashiers:
+            cashier_id = str(cashier['_id'])
+            # Count only waiting customers for better performance
+            queue_length = db.customers.count_documents({
+                'cashier_id': cashier_id, 
+                'status': 'waiting'
+            })
+            stats[cashier_id] = {
+                'cashier': cashier,
+                'queue_length': queue_length
+            }
+        return stats
+    
+    cashier_stats = get_cached_or_fetch(cache_key, fetch_cashier_stats, 'cashier_stats')
+    
+    if not cashier_stats:
         return jsonify({'error': 'No active cashiers available'}), 400
     
+    # Find shortest queue
     shortest_queue_cashier = None
     min_queue_length = float('inf')
     
-    for cashier in cashiers:
-        queue_length = db.customers.count_documents({
-            'cashier_id': str(cashier['_id']), 
-            'status': 'waiting'
-        })
-        
-        if queue_length < min_queue_length:
-            min_queue_length = queue_length
-            shortest_queue_cashier = cashier
+    for cashier_id, stats in cashier_stats.items():
+        if stats['queue_length'] < min_queue_length:
+            min_queue_length = stats['queue_length']
+            shortest_queue_cashier = stats['cashier']
     
     # Generate OTP
     while True:
@@ -376,7 +481,7 @@ def join_queue(company_code):
     # Calculate position
     position = min_queue_length + 1
     
-    # Create customer in queue
+    # Create customer in queue with optimized data structure
     customer = {
         'cashier_id': str(shortest_queue_cashier['_id']),
         'otp': otp,
@@ -393,6 +498,10 @@ def join_queue(company_code):
     
     customer_id = db.customers.insert_one(customer).inserted_id
     
+    # Invalidate cache
+    if cache_key in cache['cashier_stats']:
+        del cache['cashier_stats'][cache_key]
+    
     # Calculate estimated wait time
     estimated_wait_seconds = position * calculate_wait_time(str(shortest_queue_cashier['_id']))
     
@@ -404,13 +513,20 @@ def join_queue(company_code):
             'company_code': company['company_code']
         })
     
-    return jsonify({
+    response = jsonify({
         'success': True,
         'otp': otp,
         'position': position,
         'cashier_number': shortest_queue_cashier['cashier_number'],
         'estimated_wait_seconds': estimated_wait_seconds
     })
+    
+    # Set cache control headers
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    
+    return response
 
 if __name__ == '__main__':
     # Get port from environment variable for Render compatibility
