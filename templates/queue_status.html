@@ -1,0 +1,197 @@
+{% extends 'base.html' %}
+
+{% block title %}Queue Status{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8 col-lg-6">
+        <div class="card shadow">
+            <div class="card-header bg-primary text-white text-center">
+                <h3>Your Queue Status</h3>
+                <h5>{{ company.name }}</h5>
+            </div>
+            <div class="card-body">
+                <div class="text-center mb-4">
+                    <div class="mb-3">
+                        <h2 class="queue-number">{{ customer.otp }}</h2>
+                        <p class="text-muted">Your Queue Number</p>
+                    </div>
+
+                    <div class="mb-3">
+                        <h3>Cashier #{{ cashier.cashier_number }}</h3>
+                    </div>
+
+                    <div class="mb-4">
+                        {% if customer.status == 'waiting' %}
+                            <div class="position-info">
+                                <h4>Position: <span id="position">{{ customer.position }}</span></h4>
+                                <p class="text-muted">Estimated wait time: <span id="wait-time">{{ (estimated_wait_seconds / 60)|round|int }} minutes</span></p>
+                            </div>
+                        {% elif customer.status == 'serving' %}
+                            <div class="alert alert-success">
+                                <h4>It's your turn!</h4>
+                                <p>Please proceed to Cashier #{{ cashier.cashier_number }}</p>
+                            </div>
+                        {% elif customer.status == 'served' %}
+                            <div class="alert alert-info">
+                                <h4>You have been served</h4>
+                                <p>Thank you for using our service</p>
+                            </div>
+                        {% elif customer.status == 'removed' %}
+                            <div class="alert alert-warning">
+                                <h4>You have been removed from the queue</h4>
+                                <p>Please contact customer service for assistance</p>
+                            </div>
+                        {% endif %}
+                    </div>
+
+                    <div class="status-info mt-3 mb-4">
+                        <div class="d-flex justify-content-center status-tracker">
+                            <div class="status-step {% if customer.status in ['waiting', 'serving', 'served'] %}active{% endif %}">
+                                <div class="step-icon">1</div>
+                                <div class="step-label">In Queue</div>
+                            </div>
+                            <div class="status-step {% if customer.status in ['serving', 'served'] %}active{% endif %}">
+                                <div class="step-icon">2</div>
+                                <div class="step-label">Being Served</div>
+                            </div>
+                            <div class="status-step {% if customer.status == 'served' %}active{% endif %}">
+                                <div class="step-icon">3</div>
+                                <div class="step-label">Completed</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="text-center mt-4">
+                        <p class="text-muted small">This page updates automatically.</p>
+                        <p class="text-muted small">Joined at: {{ customer.join_time.strftime('%H:%M, %d %b %Y') }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block head %}
+<style>
+    .queue-number {
+        font-size: 2.5rem;
+        font-weight: bold;
+        color: #007bff;
+    }
+    
+    .status-tracker {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 100%;
+        max-width: 400px;
+        margin: 0 auto;
+    }
+    
+    .status-step {
+        text-align: center;
+        position: relative;
+        flex: 1;
+    }
+    
+    .status-step::after {
+        content: "";
+        position: absolute;
+        top: 25px;
+        left: 50%;
+        width: 100%;
+        height: 2px;
+        background-color: #dee2e6;
+        z-index: -1;
+    }
+    
+    .status-step:last-child::after {
+        display: none;
+    }
+    
+    .step-icon {
+        width: 50px;
+        height: 50px;
+        border-radius: 50%;
+        background-color: #dee2e6;
+        color: #6c757d;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        margin: 0 auto 10px;
+        z-index: 1;
+        position: relative;
+    }
+    
+    .status-step.active .step-icon {
+        background-color: #28a745;
+        color: white;
+    }
+    
+    .status-step.active::after {
+        background-color: #28a745;
+    }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Set up Socket.IO connection for real-time updates
+        const socket = io();
+        const otp = "{{ customer.otp }}";
+        
+        socket.on('connect', function() {
+            // Join the customer's room for personalized updates
+            socket.emit('join_customer_room', { otp: otp });
+            
+            // Also join company room for general updates
+            socket.emit('join_company_room', { company_code: "{{ company.company_code }}" });
+        });
+        
+        // Listen for customer turn notifications
+        socket.on('customer_turn', function(data) {
+            if (data.otp === otp) {
+                // Reload the page to update status
+                window.location.reload();
+            }
+        });
+        
+        // Listen for customer removed notifications
+        socket.on('customer_removed', function(data) {
+            if (data.otp === otp) {
+                // Reload the page to update status
+                window.location.reload();
+            }
+        });
+        
+        // Set up periodic status check
+        function checkStatus() {
+            fetch(`/api/check_status/${otp}`)
+                .then(response => response.json())
+                .then(data => {
+                    // Update position and wait time
+                    document.getElementById('position').textContent = data.position;
+                    
+                    // Calculate wait time in minutes
+                    const waitMinutes = Math.round(data.estimated_wait_seconds / 60);
+                    document.getElementById('wait-time').textContent = `${waitMinutes} minutes`;
+                    
+                    // Reload page if status has changed
+                    if (data.status !== "{{ customer.status }}") {
+                        window.location.reload();
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking status:', error);
+                });
+        }
+        
+        // Check status every 30 seconds
+        setInterval(checkStatus, 30000);
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+
+{% block title %}Join Queue - {{ company.name }}{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card shadow">
+            <div class="card-header bg-primary text-white">
+                <h4 class="mb-0">Join Queue for {{ company.name }}</h4>
+            </div>
+            <div class="card-body">
+                <div class="text-center mb-4">
+                    <h5>{{ company.service_type }}</h5>
+                    {% if cashiers|length > 0 %}
+                        <p class="text-success">Queue is open with {{ cashiers|length }} active cashiers</p>
+                    {% else %}
+                        <p class="text-danger">Queue is currently closed. Please try again later.</p>
+                    {% endif %}
+                </div>
+                
+                {% if cashiers|length > 0 %}
+                <div class="text-center mb-4" id="joining-container">
+                    <p>Click the button below to join the queue.</p>
+                    <p>You will be assigned to the cashier with the shortest queue.</p>
+                    <button id="join-queue-btn" class="btn btn-primary btn-lg">Join Queue</button>
+                </div>
+                
+                <div id="result-container" class="d-none">
+                    <div class="text-center mb-4">
+                        <div class="alert alert-success">
+                            <h4>You are in the queue!</h4>
+                            <p>Your OTP: <strong id="otp-display" class="display-6"></strong></p>
+                            <p>Cashier: <span id="cashier-display"></span></p>
+                            <p>Position: <span id="position-display"></span></p>
+                            <p>Estimated Wait Time: <span id="wait-time-display"></span></p>
+                        </div>
+                    </div>
+                    
+                    <div class="text-center">
+                        <p>Please save your OTP. You will need it to check your status.</p>
+                        <a id="status-link" href="#" class="btn btn-primary">Check Status</a>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const joinQueueBtn = document.getElementById('join-queue-btn');
+    const joiningContainer = document.getElementById('joining-container');
+    const resultContainer = document.getElementById('result-container');
+    const otpDisplay = document.getElementById('otp-display');
+    const cashierDisplay = document.getElementById('cashier-display');
+    const positionDisplay = document.getElementById('position-display');
+    const waitTimeDisplay = document.getElementById('wait-time-display');
+    const statusLink = document.getElementById('status-link');
+    
+    if (joinQueueBtn) {
+        joinQueueBtn.addEventListener('click', function() {
+            joinQueueBtn.disabled = true;
+            joinQueueBtn.textContent = 'Please wait...';
+            
+            // Join queue API call
+            fetch(`/api/join_queue/{{ company.company_code }}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Show result
+                    joiningContainer.classList.add('d-none');
+                    resultContainer.classList.remove('d-none');
+                    
+                    // Update details
+                    otpDisplay.textContent = data.otp;
+                    cashierDisplay.textContent = `#${data.cashier_number}`;
+                    positionDisplay.textContent = data.position;
+                    
+                    // Calculate wait time in minutes
+                    const waitMinutes = Math.round(data.estimated_wait_seconds / 60);
+                    waitTimeDisplay.textContent = `~${waitMinutes} minutes`;
+                    
+                    // Set status link
+                    statusLink.href = `/queue_status/${data.otp}`;
+                    
+                    // Connect to socket for real-time updates
+                    const socket = io();
+                    socket.on('connect', function() {
+                        socket.emit('join_customer_room', { otp: data.otp });
+                    });
+                    
+                    // Listen for turn notifications
+                    socket.on('customer_turn', function(turnData) {
+                        if (turnData.otp === data.otp) {
+                            // It's this customer's turn
+                            showNotification("It's your turn!", 
+                                `Please proceed to Cashier #${turnData.cashier_number}`, 
+                                statusLink.href);
+                        }
+                    });
+                } else {
+                    alert('Error: ' + (data.error || 'Could not join queue. Please try again.'));
+                    joinQueueBtn.disabled = false;
+                    joinQueueBtn.textContent = 'Join Queue';
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error joining queue. Please try again.');
+                joinQueueBtn.disabled = false;
+                joinQueueBtn.textContent = 'Join Queue';
+            });
+        });
+    }
+    
+    // Function to show browser notification
+    function showNotification(title, message, url) {
+        // Check if browser supports notifications
+        if (!("Notification" in window)) {
+            alert(`${title}: ${message}`);
+            return;
+        }
+        
+        // Check notification permission
+        if (Notification.permission === "granted") {
+            const notification = new Notification(title, {
+                body: message,
+                icon: '/static/img/notification-icon.png'
+            });
+            
+            notification.onclick = function() {
+                window.open(url, '_blank');
+            };
+            
+            // Also show an alert for mobile devices
+            alert(`${title}: ${message}`);
+        } else if (Notification.permission !== "denied") {
+            Notification.requestPermission().then(function (permission) {
+                if (permission === "granted") {
+                    showNotification(title, message, url);
+                }
+            });
+        } else {
+            // Fall back to alert
+            alert(`${title}: ${message}`);
+        }
+    }
+});
+</script>
+{% endblock %} 

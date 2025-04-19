@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}Virtual Queue System - Home{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8 text-center">
+        <h1 class="display-4 mb-4">Welcome to Virtual Queue System</h1>
+        <p class="lead">Manage queues efficiently and provide a better experience for your customers.</p>
+        
+        <div class="row mt-5">
+            <div class="col-md-6">
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <h3>For Businesses</h3>
+                        <p>Register as an admin to create and manage queues for your business.</p>
+                        <a href="{{ url_for('register') }}" class="btn btn-primary">Register Now</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <h3>For Customers</h3>
+                        <p>Scan a QR code or enter a company code to join a queue.</p>
+                        <div class="input-group mb-3">
+                            <input type="text" id="company-code" class="form-control" placeholder="Enter company code">
+                            <button class="btn btn-primary" type="button" id="join-queue-btn">Join Queue</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="mt-5">
+            <h2>How It Works</h2>
+            <div class="row mt-4">
+                <div class="col-md-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">For Businesses</h5>
+                            <ol class="text-start">
+                                <li>Register as an admin</li>
+                                <li>Create your company profile</li>
+                                <li>Set up cashiers/service points</li>
+                                <li>Share your unique QR code with customers</li>
+                                <li>Manage your queue in real-time</li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">For Customers</h5>
+                            <ol class="text-start">
+                                <li>Scan QR code or enter company code</li>
+                                <li>Receive your position and OTP</li>
+                                <li>Wait for your turn, see estimated wait time</li>
+                                <li>Get notified when it's your turn</li>
+                                <li>Proceed to your assigned cashier</li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">Benefits</h5>
+                            <ul class="text-start">
+                                <li>Reduce physical queues</li>
+                                <li>Improve customer satisfaction</li>
+                                <li>Optimize service efficiency</li>
+                                <li>Real-time queue management</li>
+                                <li>Analytics and insights</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const joinQueueBtn = document.getElementById('join-queue-btn');
+    const companyCodeInput = document.getElementById('company-code');
+    
+    joinQueueBtn.addEventListener('click', function() {
+        const companyCode = companyCodeInput.value.trim();
+        if (companyCode) {
+            window.location.href = `/join/${companyCode}`;
+        } else {
+            alert('Please enter a company code');
+        }
+    });
+    
+    companyCodeInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            joinQueueBtn.click();
+        }
+    });
+});
+</script>
+{% endblock %} 

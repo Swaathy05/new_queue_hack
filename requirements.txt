@@ -1,0 +1,13 @@
+flask==2.3.3
+flask-sqlalchemy==3.0.5
+flask-socketio==5.3.4
+python-socketio==5.8.0
+gevent==23.9.1
+gevent-websocket==0.10.1
+qrcode==7.4.2
+Pillow==10.0.0
+gunicorn==21.2.0
+python-engineio==4.5.1
+Werkzeug==2.3.7
+dnspython==2.4.0
+setuptools==69.0.3 
