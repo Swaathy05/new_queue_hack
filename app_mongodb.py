@@ -19,8 +19,13 @@ import time
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your_secret_key_here')
 
-# Configure MongoDB
+# Configure MongoDB - ensure URI has proper scheme
 mongodb_uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/virtual_queue')
+# Ensure URI starts with mongodb:// or mongodb+srv://
+if mongodb_uri and not (mongodb_uri.startswith('mongodb://') or mongodb_uri.startswith('mongodb+srv://')):
+    mongodb_uri = 'mongodb://' + mongodb_uri
+
+print(f"Using MongoDB URI: {mongodb_uri}")
 app.config['MONGO_URI'] = mongodb_uri
 
 # Performance settings

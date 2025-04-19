@@ -14,6 +14,7 @@ services:
           type: mongodb
           name: virtual-queue-db
           property: connectionString
+        comment: "Ensure this has format mongodb://username:password@host:port/database"
 
   - type: mongodb
     name: virtual-queue-db
