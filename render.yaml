@@ -3,17 +3,21 @@ services:
     name: virtual-queue
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --worker-class gevent -w 1 app:app
+    startCommand: gunicorn --worker-class gevent -w 1 app_mongodb:app
     envVars:
       - key: PORT
         value: 10000
       - key: SECRET_KEY
         generateValue: true
-      - key: DATABASE_URL
-        fromDatabase:
+      - key: MONGODB_URI
+        fromService:
+          type: mongodb
           name: virtual-queue-db
           property: connectionString
 
-databases:
-  - name: virtual-queue-db
-    plan: free 
+  - type: mongodb
+    name: virtual-queue-db
+    plan: free
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: everywhere 
