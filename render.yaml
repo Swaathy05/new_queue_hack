@@ -3,7 +3,7 @@ services:
     name: virtual-queue
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --worker-class gevent -w 1 app_mongodb:app
+    startCommand: gunicorn --worker-class gevent -w 1 app_wrapper:app
     envVars:
       - key: PORT
         value: 10000
