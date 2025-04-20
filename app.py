@@ -40,7 +40,15 @@ logger.info(f"Database URI: {app.config['SQLALCHEMY_DATABASE_URI']}")
 try:
     db = SQLAlchemy(app)
     logger.info("SQLAlchemy initialized")
-    socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
+    
+    # Configure SocketIO with explicit gevent support
+    socketio = SocketIO(
+        app, 
+        cors_allowed_origins="*", 
+        async_mode='gevent',
+        logger=logger,
+        engineio_logger=logger
+    )
     logger.info("SocketIO initialized with async_mode='gevent'")
 except Exception as e:
     logger.error(f"Error initializing extensions: {e}")
@@ -617,35 +625,40 @@ def join_queue(company_code):
     db.session.add(customer)
     
     # Check if any other customers are incorrectly marked as serving
-    serving_count = Customer.query.filter_by(
+    serving_customers = Customer.query.filter_by(
         cashier_id=shortest_queue_cashier.id,
         status='serving'
-    ).count()
+    ).all()
     
-    if serving_count > 1:
-        # Fix serving status - only position 1 should be serving
-        logger.warning(f"Multiple serving customers detected for cashier {shortest_queue_cashier.id}. Fixing statuses.")
-        serving_customers = Customer.query.filter_by(
-            cashier_id=shortest_queue_cashier.id,
-            status='serving'
-        ).order_by(Customer.join_time).all()
+    if len(serving_customers) > 1:
+        # More than one customer is marked as serving - fix this issue
+        logger.warning(f"Multiple serving customers detected for cashier {shortest_queue_cashier.id}. Found {len(serving_customers)} serving customers.")
         
-        # Keep the oldest one as serving, mark the rest as waiting
+        # Sort by join time to keep the oldest one as serving
+        serving_customers.sort(key=lambda x: x.join_time)
+        
+        # Mark all except the first one as waiting
         for i, cust in enumerate(serving_customers):
-            if i > 0:  # Skip the first one (oldest)
+            if i > 0:  # Skip the first (oldest) one
+                logger.info(f"Fixing customer {cust.otp} status from 'serving' to 'waiting'")
                 cust.status = 'waiting'
                 cust.serving_start_time = None
-    
-    db.session.commit()
-    
-    # Calculate estimated wait time
-    estimated_wait_seconds = position * calculate_wait_time(shortest_queue_cashier.id)
+                
+                # Ensure no duplicate positions
+                if cust.position == 1:
+                    # Find highest position number
+                    max_position = db.session.query(db.func.max(Customer.position)).filter(
+                        Customer.cashier_id == shortest_queue_cashier.id,
+                        Customer.status == 'waiting'
+                    ).scalar() or 1
+                    
+                    cust.position = max_position + 1
+                    logger.info(f"Fixed position for customer {cust.otp} from 1 to {cust.position}")
     
     # If this is the first customer for this cashier, mark as serving
-    if position == 1:
+    if position == 1 and not serving_customers:
         customer.status = 'serving'
         customer.serving_start_time = datetime.utcnow()
-        db.session.commit()
         
         # Emit socket event to notify the customer
         socketio.emit('customer_turn', {
@@ -653,6 +666,12 @@ def join_queue(company_code):
             'cashier_number': shortest_queue_cashier.cashier_number,
             'company_code': company.company_code
         })
+    
+    # Final commit to save all changes
+    db.session.commit()
+    
+    # Calculate estimated wait time
+    estimated_wait_seconds = position * calculate_wait_time(shortest_queue_cashier.id)
     
     return jsonify({
         'success': True,
@@ -837,6 +856,27 @@ def serve_customer(cashier_id):
         # Update positions for remaining customers
         update_customer_positions(cashier_id, old_position)
     
+    # Make sure no other customers are incorrectly marked as serving
+    duplicate_serving = Customer.query.filter_by(
+        cashier_id=cashier_id,
+        status='serving'
+    ).filter(Customer.id != next_customer.id).all()
+    
+    if duplicate_serving:
+        logger.warning(f"Found {len(duplicate_serving)} duplicate serving customers for cashier {cashier_id}")
+        for cust in duplicate_serving:
+            logger.info(f"Fixing customer {cust.otp} status from 'serving' to 'waiting'")
+            cust.status = 'waiting'
+            cust.serving_start_time = None
+            
+            # Ensure no duplicate positions by moving to the end of the queue
+            max_position = db.session.query(db.func.max(Customer.position)).filter(
+                Customer.cashier_id == cashier_id,
+                Customer.status == 'waiting'
+            ).scalar() or 1
+            
+            cust.position = max_position + 1
+    
     db.session.commit()
     
     # Emit socket event to notify the customer
@@ -999,7 +1039,17 @@ if __name__ == "__main__":
     logger.info(f"Starting server on port {port}")
     
     try:
-        socketio.run(app, host="0.0.0.0", port=port, debug=False)
+        from gevent import pywsgi
+        from geventwebsocket.handler import WebSocketHandler
+        
+        logger.info("Using gevent WebSocket server")
+        server = pywsgi.WSGIServer(
+            ('0.0.0.0', port), 
+            app, 
+            handler_class=WebSocketHandler,
+            log=logger
+        )
+        server.serve_forever()
     except Exception as e:
         logger.error(f"Error running the server: {e}")
         logger.error(traceback.format_exc())
