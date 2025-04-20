@@ -448,7 +448,10 @@ def get_cashier_queue(cashier_id):
             logger.warning(f"Unauthorized access to cashier {cashier_id}")
             return jsonify({'error': 'Unauthorized access'}), 403
         
-        customers = Customer.query.filter_by(cashier_id=cashier_id).order_by(Customer.position).all()
+        # Only get active customers (waiting or serving)
+        customers = Customer.query.filter_by(cashier_id=cashier_id).filter(
+            Customer.status.in_(['waiting', 'serving'])
+        ).order_by(Customer.position).all()
         
         queue_data = []
         for customer in customers:
@@ -535,16 +538,21 @@ def check_status(otp):
         cashier = Cashier.query.get(customer.cashier_id)
         company = Company.query.get(cashier.company_id)
         
-        # Calculate estimated wait time
-        estimated_wait_seconds = customer.position * calculate_wait_time(cashier.id)
+        # Calculate estimated wait time - only for active customers
+        estimated_wait_seconds = 0
+        if customer.status in ['waiting', 'serving']:
+            estimated_wait_seconds = customer.position * calculate_wait_time(cashier.id)
         
         # Calculate time since serving started (if applicable)
         serving_time_passed = None
         if customer.serving_start_time:
             serving_time_passed = (datetime.utcnow() - customer.serving_start_time).total_seconds()
         
+        # For served or removed customers, return 0 as position
+        position = customer.position if customer.status in ['waiting', 'serving'] else 0
+        
         response = jsonify({
-            'position': customer.position,
+            'position': position,
             'status': customer.status,
             'cashier_number': cashier.cashier_number,
             'cashier_is_active': cashier.is_active,
@@ -804,6 +812,8 @@ def serve_customer(cashier_id):
         for customer in already_serving:
             customer.status = 'served'
             customer.served_time = datetime.utcnow()
+            customer.position = 0  # Reset position when served
+            logger.info(f"Marking customer {customer.otp} as served and setting position to 0")
             
             # Add to history - consider moving this to a function
             wait_time_seconds = int((customer.served_time - customer.join_time).total_seconds())
@@ -819,24 +829,47 @@ def serve_customer(cashier_id):
             )
             db.session.add(history)
         
-        # Process next customer
+        # Commit these changes before finding the next customer
+        db.session.commit()
+        
+        # Process next customer - find the one with the lowest position
         next_customer = Customer.query.filter_by(
             cashier_id=cashier_id,
             status='waiting'
         ).order_by(Customer.position).first()
         
         if not next_customer:
-            db.session.commit()  # Commit changes to already serving customers
             return jsonify({'message': 'No customers waiting in queue'}), 200
         
         # Update next customer
+        logger.info(f"Setting customer {next_customer.otp} as serving with position 1")
         next_customer.status = 'serving'
         next_customer.serving_start_time = datetime.utcnow()
         old_position = next_customer.position
+        next_customer.position = 1  # Ensure position is 1
         
         # Update positions if needed
         if old_position > 1:
-            update_customer_positions(cashier_id, 1)  # Update from position 1
+            update_customer_positions(cashier_id, old_position)
+        
+        # Check for any duplicate serving customers (safety check)
+        duplicate_serving = Customer.query.filter_by(
+            cashier_id=cashier_id,
+            status='serving'
+        ).filter(Customer.id != next_customer.id).all()
+        
+        if duplicate_serving:
+            logger.warning(f"Found {len(duplicate_serving)} duplicate serving customers during serve operation. Fixing...")
+            for cust in duplicate_serving:
+                cust.status = 'waiting'
+                cust.serving_start_time = None
+                # Move to end of queue
+                max_position = db.session.query(db.func.max(Customer.position)).filter(
+                    Customer.cashier_id == cashier_id,
+                    Customer.status == 'waiting'
+                ).scalar() or 1
+                cust.position = max_position + 1
+                logger.info(f"Fixed duplicate serving customer {cust.otp}, moved to position {cust.position}")
         
         db.session.commit()
         
@@ -845,6 +878,13 @@ def serve_customer(cashier_id):
             'otp': next_customer.otp,
             'cashier_number': cashier.cashier_number,
             'company_code': cashier.company.company_code
+        })
+        
+        # Emit queue update event to refresh all clients
+        socketio.emit('queue_updated', {
+            'cashier_id': cashier_id,
+            'company_code': cashier.company.company_code,
+            'timestamp': datetime.utcnow().isoformat()
         })
         
         return jsonify({
@@ -928,66 +968,111 @@ def remove_customer(customer_id):
 @app.route('/api/delay_customer/<int:customer_id>', methods=['POST'])
 @login_required
 def delay_customer(customer_id):
-    customer = Customer.query.get_or_404(customer_id)
-    cashier = Cashier.query.get(customer.cashier_id)
-    
-    # Check if admin owns this company
-    company = Company.query.get(cashier.company_id)
-    if company.admin_id != int(session.get('admin_id')):
-        return jsonify({'error': 'Unauthorized access'}), 403
-    
-    # Only allow delaying customers who are currently serving
-    if customer.status != 'serving':
-        return jsonify({'error': 'Only currently serving customers can be delayed'}), 400
-    
-    # Store the current position
-    old_position = customer.position
-    
-    # Update customer status and increment delay count
-    customer.status = 'waiting'
-    customer.delays += 1
-    customer.serving_start_time = None
-    
-    # Move the delayed customer to the end of the waiting queue
-    max_position = db.session.query(db.func.max(Customer.position)).filter(
-        Customer.cashier_id == cashier.id,
-        Customer.status == 'waiting'
-    ).scalar() or 0
-    
-    # If there are other waiting customers, position this one at the end
-    if max_position > 0:
-        customer.position = max_position + 1
-    
-    db.session.commit()
-    
-    # Emit socket event to notify all clients
-    socketio.emit('customer_delayed', {
-        'otp': customer.otp,
-        'cashier_number': cashier.cashier_number,
-        'company_code': company.company_code
-    })
-    
-    # Find the next waiting customer for this cashier
-    next_customer = Customer.query.filter_by(
-        cashier_id=cashier.id,
-        status='waiting',
-        position=1
-    ).first()
-    
-    # If there's a next customer, mark them as serving
-    if next_customer:
-        next_customer.status = 'serving'
-        next_customer.serving_start_time = datetime.utcnow()
+    try:
+        customer = Customer.query.get_or_404(customer_id)
+        cashier = Cashier.query.get(customer.cashier_id)
+        
+        # Check if admin owns this company
+        company = Company.query.get(cashier.company_id)
+        if company.admin_id != int(session.get('admin_id')):
+            return jsonify({'error': 'Unauthorized access'}), 403
+        
+        # Only allow delaying customers who are currently serving
+        if customer.status != 'serving':
+            return jsonify({'error': 'Only currently serving customers can be delayed'}), 400
+        
+        # Increment delay count
+        customer.delays += 1
+        logger.info(f"Customer {customer.otp} delayed, delay count now: {customer.delays}")
+        
+        # Check if this is the third delay (delays now equals 3)
+        if customer.delays >= 3:
+            # If delayed 3 times, remove the customer
+            logger.info(f"Customer {customer.otp} has been delayed 3 times, removing from queue")
+            customer.status = 'removed'
+            
+            # Record in history
+            history_entry = QueueHistory(
+                company_id=company.id,
+                cashier_number=cashier.cashier_number,
+                otp=customer.otp,
+                join_time=customer.join_time,
+                served_time=datetime.utcnow(),
+                wait_time_seconds=int((datetime.utcnow() - customer.join_time).total_seconds()),
+                status='removed',
+                delays=customer.delays
+            )
+            db.session.add(history_entry)
+            
+            # Emit socket event to notify the customer about removal
+            socketio.emit('customer_removed', {
+                'otp': customer.otp,
+                'cashier_number': cashier.cashier_number,
+                'company_code': company.company_code,
+                'reason': 'Maximum delays reached'
+            })
+        else:
+            # Update customer status and reset serving start time
+            customer.status = 'waiting'
+            customer.serving_start_time = None
+            
+            # Move the delayed customer to the end of the waiting queue
+            max_position = db.session.query(db.func.max(Customer.position)).filter(
+                Customer.cashier_id == cashier.id,
+                Customer.status == 'waiting'
+            ).scalar() or 0
+            
+            # Position at the end of the queue
+            if max_position > 0:
+                customer.position = max_position + 1
+                
+            # Emit socket event to notify all clients
+            socketio.emit('customer_delayed', {
+                'otp': customer.otp,
+                'cashier_number': cashier.cashier_number,
+                'company_code': company.company_code,
+                'new_position': customer.position,
+                'delays': customer.delays
+            })
+        
+        # Commit changes before finding next customer
         db.session.commit()
         
-        # Emit socket event to notify the next customer
-        socketio.emit('customer_turn', {
-            'otp': next_customer.otp,
-            'cashier_number': cashier.cashier_number,
-            'company_code': company.company_code
-        })
+        # Find the next waiting customer for this cashier - the one with lowest position
+        next_customer = Customer.query.filter_by(
+            cashier_id=cashier.id,
+            status='waiting'
+        ).order_by(Customer.position).first()
+        
+        # Always serve the next customer if available
+        if next_customer:
+            logger.info(f"Setting next customer {next_customer.otp} as serving")
+            
+            # Ensure the next customer is in position 1
+            old_position = next_customer.position
+            next_customer.position = 1
+            next_customer.status = 'serving'
+            next_customer.serving_start_time = datetime.utcnow()
+            
+            # Update other positions if needed
+            if old_position > 1:
+                update_customer_positions(cashier.id, old_position)
+                
+            db.session.commit()
+            
+            # Emit socket event to notify the next customer
+            socketio.emit('customer_turn', {
+                'otp': next_customer.otp,
+                'cashier_number': cashier.cashier_number,
+                'company_code': company.company_code
+            })
+        
+        return jsonify({'success': True, 'message': 'Customer delayed or removed'})
     
-    return jsonify({'success': True, 'message': 'Customer delayed'})
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error delaying customer: {str(e)}")
+        return jsonify({'error': 'An error occurred while delaying customer'}), 500
 
 # Ensure application variable exists for Gunicorn
 application = app
