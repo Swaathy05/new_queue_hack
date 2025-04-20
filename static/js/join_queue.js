@@ -226,36 +226,19 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     function handleSuccessfulJoin(data) {
-        // Show result
-        if (elements.joiningContainer && elements.resultContainer) {
-            elements.joiningContainer.classList.add('d-none');
-            elements.resultContainer.classList.remove('d-none');
-            
-            // Update details
-            if (elements.otpDisplay) elements.otpDisplay.textContent = data.otp;
-            if (elements.cashierDisplay) elements.cashierDisplay.textContent = `#${data.cashier_number}`;
-            if (elements.positionDisplay) elements.positionDisplay.textContent = data.position;
-            
-            // Calculate wait time in minutes
-            if (elements.waitTimeDisplay) {
-                const waitMinutes = Math.round(data.estimated_wait_seconds / 60);
-                elements.waitTimeDisplay.textContent = `~${waitMinutes} minutes`;
-            }
-            
-            // Set status link
-            if (elements.statusLink) {
-                elements.statusLink.href = `/queue_status/${data.otp}`;
-            }
-        }
-        
-        // Add timestamp before storing
-        data.last_update = new Date().toISOString();
-        
         // Store the queue data in localStorage
-        localStorage.setItem(`queue_data_${companyCode}`, JSON.stringify(data));
+        const queueData = {
+            otp: data.otp,
+            cashier_number: data.cashier_number,
+            position: data.position,
+            status: data.status || 'waiting',
+            estimated_wait_seconds: data.estimated_wait_seconds,
+            last_update: new Date().toISOString()
+        };
+        localStorage.setItem(`queue_data_${companyCode}`, JSON.stringify(queueData));
         
-        // Connect to socket for real-time updates
-        initializeSocket(data.otp);
+        // Redirect directly to the queue status page
+        window.location.href = `/queue_status/${data.otp}`;
     }
     
     function handleFailedJoin(errorMessage) {

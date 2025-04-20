@@ -25,7 +25,8 @@
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('logout') }}">Logout</a>
                     </li>
-                    {% else %}
+                    {% elif request.endpoint in ['login', 'register', 'dashboard', 'create_company', 'manage_company', 'admin_panel', 'logout'] %}
+                    {# Only show login/register on admin pages #}
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('login') }}">Admin Login</a>
                     </li>
