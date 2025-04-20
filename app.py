@@ -32,6 +32,16 @@ logger.info(f"Using SECRET_KEY: {app.config['SECRET_KEY']}")
 
 # Configure SQLite database - use a persistent path for Railway
 DB_PATH = os.getenv('DB_PATH', 'queue_system.db')
+
+# Ensure database directory exists
+db_dir = os.path.dirname(DB_PATH)
+if db_dir and not os.path.exists(db_dir):
+    try:
+        os.makedirs(db_dir, exist_ok=True)
+        logger.info(f"Created database directory: {db_dir}")
+    except Exception as e:
+        logger.error(f"Error creating database directory {db_dir}: {e}")
+
 app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{DB_PATH}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 logger.info(f"Database URI: {app.config['SQLALCHEMY_DATABASE_URI']}")
@@ -120,10 +130,14 @@ class QueueHistory(db.Model):
 # Create database tables at startup
 with app.app_context():
     try:
+        logger.info(f"Attempting to create database at: {DB_PATH}")
         db.create_all()
-        logger.info("Database tables created")
+        logger.info("Database tables created successfully")
     except Exception as e:
         logger.error(f"Error creating database tables: {e}")
+        logger.error(f"Database path: {DB_PATH}")
+        logger.error(f"Directory exists: {os.path.exists(os.path.dirname(DB_PATH)) if os.path.dirname(DB_PATH) else 'Using current directory'}")
+        logger.error(f"Directory writable: {os.access(os.path.dirname(DB_PATH), os.W_OK) if os.path.dirname(DB_PATH) else 'Unknown'}")
         logger.error(traceback.format_exc())
 
 # Helper Functions
