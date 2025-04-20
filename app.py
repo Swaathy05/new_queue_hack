@@ -41,13 +41,13 @@ try:
     db = SQLAlchemy(app)
     logger.info("SQLAlchemy initialized")
     
-    # Configure SocketIO with explicit gevent support
+    # Update SocketIO initialization for better compatibility
     socketio = SocketIO(
         app, 
         cors_allowed_origins="*", 
         async_mode='gevent',
-        logger=logger,
-        engineio_logger=logger
+        logger=True,
+        engineio_logger=True  # Enable more detailed logging
     )
     logger.info("SocketIO initialized with async_mode='gevent'")
 except Exception as e:
@@ -430,37 +430,56 @@ def export_history(company_id):
 @app.route('/api/get_cashier_queue/<int:cashier_id>')
 @login_required
 def get_cashier_queue(cashier_id):
-    cashier = Cashier.query.get_or_404(cashier_id)
-    
-    # Check if admin owns this company
-    company = Company.query.get(cashier.company_id)
-    if company.admin_id != int(session.get('admin_id')):
-        return jsonify({'error': 'Unauthorized access'}), 403
-    
-    customers = Customer.query.filter_by(cashier_id=cashier_id).order_by(Customer.position).all()
-    
-    queue_data = []
-    for customer in customers:
-        # Calculate estimated wait time
-        position = customer.position
-        estimated_wait_time = int(position * calculate_wait_time(cashier_id))
+    try:
+        # Check if cashier exists
+        cashier = Cashier.query.get(cashier_id)
+        if not cashier:
+            logger.warning(f"Cashier with ID {cashier_id} not found")
+            return jsonify({
+                'error': 'Cashier not found',
+                'cashier_number': None,
+                'is_active': False,
+                'queue': []
+            }), 404
         
-        queue_data.append({
-            'id': customer.id,
-            'otp': customer.otp,
-            'position': position,
-            'status': customer.status,
-            'delays': customer.delays,
-            'join_time': customer.join_time.strftime('%H:%M:%S'),
-            'estimated_wait_time': estimated_wait_time,
-            'serving_start_time': customer.serving_start_time.strftime('%H:%M:%S') if customer.serving_start_time else None
+        # Check if admin owns this company
+        company = Company.query.get(cashier.company_id)
+        if not company or company.admin_id != int(session.get('admin_id')):
+            logger.warning(f"Unauthorized access to cashier {cashier_id}")
+            return jsonify({'error': 'Unauthorized access'}), 403
+        
+        customers = Customer.query.filter_by(cashier_id=cashier_id).order_by(Customer.position).all()
+        
+        queue_data = []
+        for customer in customers:
+            # Calculate estimated wait time
+            position = customer.position
+            estimated_wait_time = int(position * calculate_wait_time(cashier_id))
+            
+            queue_data.append({
+                'id': customer.id,
+                'otp': customer.otp,
+                'position': position,
+                'status': customer.status,
+                'delays': customer.delays,
+                'join_time': customer.join_time.strftime('%H:%M:%S'),
+                'estimated_wait_time': estimated_wait_time,
+                'serving_start_time': customer.serving_start_time.strftime('%H:%M:%S') if customer.serving_start_time else None
+            })
+        
+        return jsonify({
+            'cashier_number': cashier.cashier_number,
+            'is_active': cashier.is_active,
+            'queue': queue_data
         })
-    
-    return jsonify({
-        'cashier_number': cashier.cashier_number,
-        'is_active': cashier.is_active,
-        'queue': queue_data
-    })
+    except Exception as e:
+        logger.error(f"Error in get_cashier_queue: {str(e)}")
+        return jsonify({
+            'error': 'An error occurred while fetching queue data',
+            'cashier_number': None,
+            'is_active': False,
+            'queue': []
+        }), 500
 
 @app.route('/api/toggle_cashier/<int:cashier_id>', methods=['POST'])
 @login_required
@@ -747,38 +766,21 @@ def test():
 
 # Function to update positions for customers in a queue
 def update_customer_positions(cashier_id, start_position):
-    """Update all customer positions after a customer is removed or served."""
-    logger.info(f"Updating positions for cashier_id {cashier_id}, positions after {start_position}")
-    
     try:
-        # Validate parameters
-        if not cashier_id or not isinstance(cashier_id, int) or cashier_id <= 0:
-            logger.error(f"Invalid cashier_id: {cashier_id}")
-            return []
-            
-        if not isinstance(start_position, int) or start_position < 0:
-            logger.error(f"Invalid start_position: {start_position}")
-            return []
-        
-        # Find all waiting customers with positions > start_position
+        # Add transactions for safety
         customers_to_update = Customer.query.filter_by(
             cashier_id=cashier_id, 
             status='waiting'
         ).filter(Customer.position > start_position).order_by(Customer.position).all()
         
-        logger.info(f"Found {len(customers_to_update)} customers to update positions")
-        
-        # Update positions
         for customer in customers_to_update:
             old_position = customer.position
             customer.position -= 1
-            logger.info(f"Updating customer {customer.otp} position from {old_position} to {customer.position}")
+            logger.info(f"Updated customer {customer.otp} position from {old_position} to {customer.position}")
         
-        # Commit changes
         db.session.commit()
         
-        # Emit event to notify all clients about the position update with more detailed data
-        logger.info(f"Emitting queue_updated event for cashier_id {cashier_id}")
+        # Emit more detailed data for debugging
         socketio.emit('queue_updated', {
             'cashier_id': cashier_id, 
             'updated_count': len(customers_to_update),
@@ -787,116 +789,72 @@ def update_customer_positions(cashier_id, start_position):
         
         return customers_to_update
     except Exception as e:
-        logger.error(f"Error updating customer positions: {str(e)}")
-        logger.error(traceback.format_exc())
-        # Roll back any failed transaction
-        db.session.rollback()
+        logger.error(f"Error updating positions: {str(e)}")
+        db.session.rollback()  # Important to roll back on error
         return []
 
 @app.route('/api/serve_customer/<int:cashier_id>', methods=['POST'])
 def serve_customer(cashier_id):
-    cashier = Cashier.query.get_or_404(cashier_id)
-    
-    # Check if any customer is already in 'serving' status for this cashier
-    already_serving = Customer.query.filter_by(
-        cashier_id=cashier_id,
-        status='serving'
-    ).all()
-    
-    # If there are customers already being served, mark them as served
-    for customer in already_serving:
-        logger.info(f"Marking customer with OTP {customer.otp} as served (was in serving status)")
-        customer.status = 'served'
-        customer.served_time = datetime.utcnow()
+    try:
+        cashier = Cashier.query.get_or_404(cashier_id)
         
-        # Calculate wait time
-        wait_time_seconds = int((customer.served_time - customer.join_time).total_seconds()) if customer.join_time else 0
+        # Handle currently serving customers first
+        already_serving = Customer.query.filter_by(cashier_id=cashier_id, status='serving').all()
         
-        # Add to history
-        history = QueueHistory(
-            company_id=cashier.company_id,
-            cashier_number=cashier.cashier_number,
-            otp=customer.otp,
-            join_time=customer.join_time,
-            served_time=customer.served_time,
-            wait_time_seconds=wait_time_seconds,
-            status='served',
-            delays=customer.delays
-        )
-        db.session.add(history)
-    
-    # Commit these changes before finding the next customer
-    db.session.commit()
-    
-    # Now find the next customer to serve (position=1)
-    next_customer = Customer.query.filter_by(
-        cashier_id=cashier_id,
-        status='waiting',
-        position=1
-    ).first()
-    
-    if not next_customer:
-        # If no customer at position 1, look for any waiting customer
+        for customer in already_serving:
+            customer.status = 'served'
+            customer.served_time = datetime.utcnow()
+            
+            # Add to history - consider moving this to a function
+            wait_time_seconds = int((customer.served_time - customer.join_time).total_seconds())
+            history = QueueHistory(
+                company_id=cashier.company_id,
+                cashier_number=cashier.cashier_number,
+                otp=customer.otp,
+                join_time=customer.join_time,
+                served_time=customer.served_time,
+                wait_time_seconds=wait_time_seconds,
+                status='served',
+                delays=customer.delays
+            )
+            db.session.add(history)
+        
+        # Process next customer
         next_customer = Customer.query.filter_by(
             cashier_id=cashier_id,
             status='waiting'
         ).order_by(Customer.position).first()
         
-    if not next_customer:
-        return jsonify({'message': 'No customers waiting in queue'}), 200
-    
-    # Mark customer as being served
-    next_customer.status = 'serving'
-    next_customer.serving_start_time = datetime.utcnow()
-    old_position = next_customer.position
-    next_customer.position = 1  # Ensure position is 1 for serving customer
-    
-    # Only update other positions if the served customer wasn't already position 1
-    if old_position > 1:
-        # Update positions for remaining customers
-        update_customer_positions(cashier_id, old_position)
-    
-    # Make sure no other customers are incorrectly marked as serving
-    duplicate_serving = Customer.query.filter_by(
-        cashier_id=cashier_id,
-        status='serving'
-    ).filter(Customer.id != next_customer.id).all()
-    
-    if duplicate_serving:
-        logger.warning(f"Found {len(duplicate_serving)} duplicate serving customers for cashier {cashier_id}")
-        for cust in duplicate_serving:
-            logger.info(f"Fixing customer {cust.otp} status from 'serving' to 'waiting'")
-            cust.status = 'waiting'
-            cust.serving_start_time = None
-            
-            # Ensure no duplicate positions by moving to the end of the queue
-            max_position = db.session.query(db.func.max(Customer.position)).filter(
-                Customer.cashier_id == cashier_id,
-                Customer.status == 'waiting'
-            ).scalar() or 1
-            
-            cust.position = max_position + 1
-    
-    db.session.commit()
-    
-    # Emit socket event to notify the customer
-    socketio.emit('customer_turn', {
-        'otp': next_customer.otp,
-        'cashier_number': cashier.cashier_number,
-        'company_code': cashier.company.company_code
-    })
-    
-    # Notify all clients about the queue update
-    socketio.emit('queue_updated', {
-        'cashier_id': cashier_id,
-        'company_code': cashier.company.company_code,
-        'timestamp': datetime.utcnow().isoformat()
-    })
-    
-    return jsonify({
-        'message': 'Customer now being served',
-        'otp': next_customer.otp
-    }), 200
+        if not next_customer:
+            db.session.commit()  # Commit changes to already serving customers
+            return jsonify({'message': 'No customers waiting in queue'}), 200
+        
+        # Update next customer
+        next_customer.status = 'serving'
+        next_customer.serving_start_time = datetime.utcnow()
+        old_position = next_customer.position
+        
+        # Update positions if needed
+        if old_position > 1:
+            update_customer_positions(cashier_id, 1)  # Update from position 1
+        
+        db.session.commit()
+        
+        # Emit events
+        socketio.emit('customer_turn', {
+            'otp': next_customer.otp,
+            'cashier_number': cashier.cashier_number,
+            'company_code': cashier.company.company_code
+        })
+        
+        return jsonify({
+            'message': 'Customer now being served',
+            'otp': next_customer.otp
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error serving customer: {str(e)}")
+        return jsonify({'error': 'An error occurred while serving customer'}), 500
 
 @app.route('/api/remove_customer/<int:customer_id>', methods=['POST'])
 @login_required

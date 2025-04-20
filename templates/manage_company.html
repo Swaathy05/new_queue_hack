@@ -280,22 +280,36 @@
                 const customerId = event.target.getAttribute('data-customer-id');
                 const cashierId = event.target.getAttribute('data-cashier-id');
                 
-                fetch(`/api/serve_customer/${customerId}`, {
+                // Disable button and show loading state
+                event.target.disabled = true;
+                const originalText = event.target.textContent;
+                event.target.textContent = 'Processing...';
+                
+                fetch(`/api/serve_customer/${cashierId}`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     }
                 })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        console.log('Customer served successfully');
-                        loadQueueData(cashierId);
-                    } else {
-                        console.error('Error serving customer:', data.error);
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Server error: ${response.status}`);
                     }
+                    return response.json();
                 })
-                .catch(error => console.error('Error:', error));
+                .then(data => {
+                    console.log('Serve response:', data);
+                    loadQueueData(cashierId);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error serving customer. Please try again.');
+                })
+                .finally(() => {
+                    // Re-enable button
+                    event.target.disabled = false;
+                    event.target.textContent = originalText;
+                });
             }
             
             // Delay button handling
