@@ -1,67 +1,37 @@
 # Virtual Queue System
 
-A web-based queue management system for businesses with real-time updates and mobile accessibility through QR codes.
+A real-time queue management system that helps businesses organize customer flow.
 
-## Features
+## 🚀 Features
 
-- Admin interface for managing queues
-- Customer interface for joining queues via QR code
-- Real-time updates using WebSockets
-- OTP-based queue tracking
-- Analytics and queue statistics
-- Mobile-friendly design
+- **Admin Dashboard**: Complete control over queues, cashiers, and customer flow
+- **Real-time Updates**: WebSocket integration for instant queue status changes
+- **QR Code Integration**: Easy queue joining through scannable QR codes
+- **Multi-branch Support**: Manage multiple service locations from one account
+- **Analytics & Reports**: Track wait times, service efficiency, and customer flow
+- **Mobile Responsive**: Works seamlessly on all devices
+- **Notification System**: Alerts customers when their turn approaches
 
-## Deployment to Railway
+## 🛠️ Technology Stack
 
-### 1. Fork or Clone this Repository
+- **Backend**: Python, Flask, SQLite, Flask-SocketIO
+- **Frontend**: HTML5, CSS3, JavaScript, Bootstrap 5
+- **Real-time Communication**: Socket.IO
+- **Deployment**: Railway
 
-Clone this repository to your account.
+## 📋 Installation
 
-### 2. Create Railway Account
-
-- Sign up at [Railway.app](https://railway.app/)
-- Install the Railway CLI (optional)
-
-### 3. Deploy to Railway
-
-#### Option 1: Deploy via Railway Dashboard
-
-1. Create a new project in Railway
-2. Choose "Deploy from GitHub repo"
-3. Select this repository
-4. Railway will automatically detect the configuration and deploy
-
-#### Option 2: Deploy via CLI
+### Local Development
 
 ```bash
-# Login to Railway
-railway login
+# Clone the repository
+git clone https://github.com/yourusername/virtual_queue.git
+cd virtual_queue
 
-# Initialize project
-railway init
+# Create and activate virtual environment (optional but recommended)
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Deploy project
-railway up
-```
-
-### 4. Add PostgreSQL Database
-
-1. In your Railway project, go to "New Service" → "Database" → "PostgreSQL"
-2. Railway will automatically connect the database to your application
-
-### 5. Set Environment Variables
-
-Add the following environment variables in the Railway dashboard:
-- `SECRET_KEY`: A secure random string for Flask sessions
-- `PORT`: 5000 (or any port)
-
-### 6. Access Your Application
-
-After deployment, Railway will provide a URL to access your application.
-
-## Local Development
-
-```bash
 # Install dependencies
 pip install -r requirements.txt
 
@@ -69,18 +39,49 @@ pip install -r requirements.txt
 python app.py
 ```
 
-## Usage
+The application will be available at `http://localhost:5000`.
 
-### Admin
+## 🚢 Deployment to Railway
 
-1. Register a new admin account
-2. Create a company profile
-3. Set up cashiers/service points
-4. Share the generated QR code with customers
+### Prerequisites
+- Railway account
+- Git
 
-### Customers
+### Deployment Steps
 
-1. Scan the QR code or enter the company code
-2. Receive an OTP and position number
-3. Monitor queue status in real-time
-4. Proceed to the assigned cashier when notified 
+1. Fork or clone this repository to your GitHub account
+2. Sign up for a [Railway account](https://railway.app) if you don't have one
+3. Create a new project in Railway:
+   - Click "New Project" 
+   - Select "Deploy from GitHub repo"
+   - Connect your GitHub account and select your repository
+   - Railway will automatically detect the configuration
+
+4. Add the following environment variables:
+   - `SECRET_KEY`: A secure random string
+
+## 📱 Usage Guide
+
+### For Administrators
+
+1. **Registration**: Create an admin account
+2. **Company Setup**: Add your business details and create a unique company code
+3. **Cashier Configuration**: Set up cashier points based on your service needs
+4. **Queue Management**: View and manage customer queues in real-time
+5. **Analytics**: Access wait time statistics and service efficiency metrics
+
+### For Customers
+
+1. **Join Queue**: Scan the QR code or enter the company code
+2. **Receive OTP**: Get a unique OTP and position number
+3. **Track Status**: Monitor queue position and estimated wait time
+4. **Get Notified**: Receive alerts when your turn is approaching
+5. **Service**: Proceed to the assigned cashier when called
+
+## 📄 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## 📞 Contact
+
+For support or inquiries, reach out via GitHub issues or contact the maintainer directly. 

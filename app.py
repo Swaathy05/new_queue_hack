@@ -1,7 +1,6 @@
 # app.py - Main application file using SQLite for reliability
-# This serves as both a standalone app and a fallback for other versions
 
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, render_template_string
 from flask_sqlalchemy import SQLAlchemy
 from flask_socketio import SocketIO, emit
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -15,18 +14,49 @@ import csv
 import secrets
 import string
 from functools import wraps
+import logging
+import sys
+import traceback
+
+# Set up logging
+logging.basicConfig(level=logging.DEBUG, 
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    stream=sys.stdout)
+logger = logging.getLogger('app')
+logger.info("Starting Virtual Queue System")
 
 # Initialize Flask app
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your_secret_key_here')
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'ventic')
+logger.info(f"Using SECRET_KEY: {app.config['SECRET_KEY']}")
 
-# Configure SQLite database
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///queue_system.db'
+# Configure SQLite database - use a persistent path for Railway
+DB_PATH = os.getenv('DB_PATH', 'queue_system.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{DB_PATH}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+logger.info(f"Database URI: {app.config['SQLALCHEMY_DATABASE_URI']}")
 
 # Initialize extensions
-db = SQLAlchemy(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
+try:
+    db = SQLAlchemy(app)
+    logger.info("SQLAlchemy initialized")
+    socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
+    logger.info("SocketIO initialized with async_mode='gevent'")
+except Exception as e:
+    logger.error(f"Error initializing extensions: {e}")
+    logger.error(traceback.format_exc())
+
+# Error handler for all exceptions
+@app.errorhandler(Exception)
+def handle_exception(e):
+    logger.error(f"Unhandled exception: {str(e)}")
+    logger.error(traceback.format_exc())
+    return jsonify({"error": "Internal Server Error", "details": str(e)}), 500
+
+# Simple health check that doesn't require database
+@app.route('/api/health')
+def api_health():
+    return jsonify({"status": "API is running", "time": str(datetime.utcnow())}), 200
 
 # Models
 class Admin(db.Model):
@@ -79,10 +109,14 @@ class QueueHistory(db.Model):
     status = db.Column(db.String(20), nullable=False)
     delays = db.Column(db.Integer, default=0)
 
-# Create database tables
+# Create database tables at startup
 with app.app_context():
-    db.create_all()
-    print("Database tables created")
+    try:
+        db.create_all()
+        logger.info("Database tables created")
+    except Exception as e:
+        logger.error(f"Error creating database tables: {e}")
+        logger.error(traceback.format_exc())
 
 # Helper Functions
 def generate_company_code():
@@ -118,9 +152,46 @@ def login_required(f):
 # Routes
 @app.route('/')
 def index():
-    if 'admin_id' in session:
-        return redirect(url_for('dashboard'))
-    return render_template('index.html')
+    # If user is logged in, redirect to dashboard - but provide alternate navigation
+    html = '''
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Virtual Queue System</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    </head>
+    <body>
+        <div class="container mt-5">
+            <div class="jumbotron text-center">
+                <h1 class="display-4">Welcome to Virtual Queue System</h1>
+                <p class="lead">A smart solution for managing customer queues</p>
+                <hr class="my-4">
+            </div>
+            
+            <div class="row mt-5">
+                <div class="col-md-6 mx-auto">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Choose an option</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="d-grid gap-3">
+                                <a href="/login" class="btn btn-primary btn-lg">Login</a>
+                                <a href="/register" class="btn btn-success btn-lg">Register</a>
+                                <a href="/admin" class="btn btn-info btn-lg">Admin Panel</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    </body>
+    </html>
+    '''
+    return html
 
 @app.route('/health')
 def health():
@@ -180,7 +251,56 @@ def logout():
 def dashboard():
     admin_id = session.get('admin_id')
     companies = Company.query.filter_by(admin_id=admin_id).all()
-    return render_template('dashboard.html', companies=companies)
+    
+    # Use a hardcoded template to avoid the create_company URL issue
+    html = '''
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Dashboard - Virtual Queue System</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    </head>
+    <body>
+        <div class="container mt-5">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1>Admin Dashboard</h1>
+                <a href="/create_company" class="btn btn-primary">Create New Company</a>
+            </div>
+            
+            {% if companies %}
+            <div class="row">
+                {% for company in companies %}
+                <div class="col-md-4 mb-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">{{ company.name }}</h5>
+                            <p class="card-text text-muted">{{ company.service_type }}</p>
+                            <p><strong>Code:</strong> {{ company.company_code }}</p>
+                            <p><strong>Created:</strong> {{ company.created_at.strftime('%Y-%m-%d') }}</p>
+                            <p><strong>Cashiers:</strong> {{ company.cashiers|length }}</p>
+                        </div>
+                        <div class="card-footer bg-white border-top-0">
+                            <a href="/manage_company/{{ company.id }}" class="btn btn-primary w-100">Manage</a>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="alert alert-info">
+                <p>You don't have any companies yet. Click the "Create New Company" button to get started.</p>
+            </div>
+            {% endif %}
+        </div>
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    </body>
+    </html>
+    '''
+    
+    # Render the hardcoded template with the companies data
+    return render_template_string(html, companies=companies)
 
 @app.route('/create_company', methods=['GET', 'POST'])
 @login_required
@@ -263,6 +383,41 @@ def manage_company(company_id):
     qr_code = base64.b64encode(buffered.getvalue()).decode('utf-8')
     
     return render_template('manage_company.html', company=company, cashiers=cashiers, stats=stats, qr_code=qr_code)
+@app.route('/export/<int:company_id>')
+@login_required
+def export_history(company_id):
+    company = Company.query.get_or_404(company_id)
+
+    if company.admin_id != session.get('admin_id'):
+        flash("Unauthorized access", "danger")
+        return redirect(url_for('dashboard'))
+
+    history = QueueHistory.query.filter_by(company_id=company_id).all()
+
+    output = BytesIO()
+    writer = csv.writer(output)
+    writer.writerow(['Cashier Number', 'OTP', 'Join Time', 'Served Time', 'Wait Time (s)', 'Status', 'Delays'])
+
+    for entry in history:
+        writer.writerow([
+            entry.cashier_number,
+            entry.otp,
+            entry.join_time.strftime('%Y-%m-%d %H:%M:%S'),
+            entry.served_time.strftime('%Y-%m-%d %H:%M:%S') if entry.served_time else '',
+            entry.wait_time_seconds or '',
+            entry.status,
+            entry.delays
+        ])
+
+    output.seek(0)
+    return (
+        output.getvalue(),
+        200,
+        {
+            'Content-Type': 'text/csv',
+            'Content-Disposition': f'attachment; filename=queue_history_{company_id}.csv'
+        }
+    )
 
 @app.route('/api/get_cashier_queue/<int:cashier_id>')
 @login_required
@@ -348,32 +503,43 @@ def queue_status(otp):
 
 @app.route('/api/check_status/<otp>')
 def check_status(otp):
-    customer = Customer.query.filter_by(otp=otp).first_or_404()
-    cashier = Cashier.query.get(customer.cashier_id)
-    
-    # Calculate estimated wait time
-    estimated_wait_seconds = customer.position * calculate_wait_time(cashier.id)
-    
-    # Calculate time since serving started (if applicable)
-    serving_time_passed = None
-    if customer.serving_start_time:
-        serving_time_passed = (datetime.utcnow() - customer.serving_start_time).total_seconds()
-    
-    response = jsonify({
-        'position': customer.position,
-        'status': customer.status,
-        'cashier_number': cashier.cashier_number,
-        'estimated_wait_seconds': estimated_wait_seconds,
-        'serving_time_passed': serving_time_passed,
-        'delays': customer.delays
-    })
-    
-    # Set cache headers
-    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    response.headers['Pragma'] = 'no-cache'
-    response.headers['Expires'] = '0'
-    
-    return response
+    try:
+        customer = Customer.query.filter_by(otp=otp).first_or_404()
+        cashier = Cashier.query.get(customer.cashier_id)
+        company = Company.query.get(cashier.company_id)
+        
+        # Calculate estimated wait time
+        estimated_wait_seconds = customer.position * calculate_wait_time(cashier.id)
+        
+        # Calculate time since serving started (if applicable)
+        serving_time_passed = None
+        if customer.serving_start_time:
+            serving_time_passed = (datetime.utcnow() - customer.serving_start_time).total_seconds()
+        
+        response = jsonify({
+            'position': customer.position,
+            'status': customer.status,
+            'cashier_number': cashier.cashier_number,
+            'cashier_is_active': cashier.is_active,
+            'estimated_wait_seconds': estimated_wait_seconds,
+            'serving_time_passed': serving_time_passed,
+            'delays': customer.delays,
+            'company_code': company.company_code,
+            'last_update_time': datetime.utcnow().isoformat(),
+            'join_time': customer.join_time.isoformat() if customer.join_time else None,
+            'served_time': customer.served_time.isoformat() if customer.served_time else None
+        })
+        
+        # Set cache headers
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        
+        return response
+    except Exception as e:
+        logger.error(f"Error checking status for OTP {otp}: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({'error': 'Could not retrieve status information'}), 500
 
 @app.route('/join/<company_code>')
 def join_queue_page(company_code):
@@ -418,7 +584,8 @@ def join_queue(company_code):
     customer = Customer(
         cashier_id=shortest_queue_cashier.id,
         otp=otp,
-        position=position
+        position=position,
+        status='waiting'  # Explicitly set status to waiting
     )
     
     db.session.add(customer)
@@ -444,15 +611,319 @@ def join_queue(company_code):
         'success': True,
         'otp': otp,
         'position': position,
+        'status': customer.status,  # Include status in response
         'cashier_number': shortest_queue_cashier.cashier_number,
         'estimated_wait_seconds': estimated_wait_seconds
     })
 
-# For WSGI servers like gunicorn
+# Add a standalone admin panel route
+@app.route('/admin')
+def admin_panel():
+    html = '''
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Admin Panel - Virtual Queue</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    </head>
+    <body>
+        <div class="container mt-5">
+            <div class="row">
+                <div class="col-12 mb-4">
+                    <h1>Virtual Queue Admin Panel</h1>
+                    <div class="alert alert-success">
+                        This is a standalone page that doesn't depend on other routes
+                    </div>
+                </div>
+                
+                <div class="col-md-6">
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            Authentication
+                        </div>
+                        <div class="card-body">
+                            <div class="list-group">
+                                <a href="/login" class="list-group-item list-group-item-action">Login</a>
+                                <a href="/register" class="list-group-item list-group-item-action">Register</a>
+                                <a href="/logout" class="list-group-item list-group-item-action">Logout</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-md-6">
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            Test Pages
+                        </div>
+                        <div class="card-body">
+                            <div class="list-group">
+                                <a href="/api/health" class="list-group-item list-group-item-action">API Health</a>
+                                <a href="/test" class="list-group-item list-group-item-action">Test Endpoint</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    </body>
+    </html>
+    '''
+    return html
+
+# Basic route for testing
+@app.route('/test')
+def test():
+    return jsonify({"message": "Test endpoint working!", "environment": dict(os.environ)}), 200
+
+# Function to update positions for customers in a queue
+def update_customer_positions(cashier_id, start_position):
+    """Update all customer positions after a customer is removed or served."""
+    logger.info(f"Updating positions for cashier_id {cashier_id}, positions after {start_position}")
+    
+    try:
+        # Validate parameters
+        if not cashier_id or not isinstance(cashier_id, int) or cashier_id <= 0:
+            logger.error(f"Invalid cashier_id: {cashier_id}")
+            return []
+            
+        if not isinstance(start_position, int) or start_position < 0:
+            logger.error(f"Invalid start_position: {start_position}")
+            return []
+        
+        # Find all waiting customers with positions > start_position
+        customers_to_update = Customer.query.filter_by(
+            cashier_id=cashier_id, 
+            status='waiting'
+        ).filter(Customer.position > start_position).order_by(Customer.position).all()
+        
+        logger.info(f"Found {len(customers_to_update)} customers to update positions")
+        
+        # Update positions
+        for customer in customers_to_update:
+            old_position = customer.position
+            customer.position -= 1
+            logger.info(f"Updating customer {customer.otp} position from {old_position} to {customer.position}")
+        
+        # Commit changes
+        db.session.commit()
+        
+        # Emit event to notify all clients about the position update with more detailed data
+        logger.info(f"Emitting queue_updated event for cashier_id {cashier_id}")
+        socketio.emit('queue_updated', {
+            'cashier_id': cashier_id, 
+            'updated_count': len(customers_to_update),
+            'timestamp': datetime.utcnow().isoformat()
+        })
+        
+        return customers_to_update
+    except Exception as e:
+        logger.error(f"Error updating customer positions: {str(e)}")
+        logger.error(traceback.format_exc())
+        # Roll back any failed transaction
+        db.session.rollback()
+        return []
+
+@app.route('/api/serve_customer/<int:customer_id>', methods=['POST'])
+@login_required
+def serve_customer(customer_id):
+    customer = Customer.query.get_or_404(customer_id)
+    cashier = Cashier.query.get(customer.cashier_id)
+    
+    # Check if admin owns this company
+    company = Company.query.get(cashier.company_id)
+    if company.admin_id != int(session.get('admin_id')):
+        return jsonify({'error': 'Unauthorized access'}), 403
+    
+    # Record in history before changing status
+    history_entry = QueueHistory(
+        company_id=company.id,
+        cashier_number=cashier.cashier_number,
+        otp=customer.otp,
+        join_time=customer.join_time,
+        served_time=datetime.utcnow(),
+        wait_time_seconds=int((datetime.utcnow() - customer.join_time).total_seconds()),
+        status='served',
+        delays=customer.delays
+    )
+    db.session.add(history_entry)
+    
+    # Store old position for updating queue
+    old_position = customer.position
+    logger.info(f"Serving customer {customer.otp} with position {old_position}")
+    
+    # Update customer status
+    customer.status = 'served'
+    customer.served_time = datetime.utcnow()
+    
+    # Commit changes to customer
+    db.session.commit()
+    
+    # Update positions for waiting customers behind this one
+    updated_customers = update_customer_positions(customer.cashier_id, old_position)
+    logger.info(f"Updated positions for {len(updated_customers)} customers")
+    
+    # Find the next waiting customer for this cashier (position 1)
+    next_customer = Customer.query.filter_by(
+        cashier_id=cashier.id,
+        status='waiting',
+        position=1
+    ).first()
+    
+    # If there's a next customer, mark them as serving
+    if next_customer:
+        logger.info(f"Marking next customer {next_customer.otp} as serving")
+        next_customer.status = 'serving'
+        next_customer.serving_start_time = datetime.utcnow()
+        db.session.commit()
+        
+        # Emit socket event to notify the next customer
+        socketio.emit('customer_turn', {
+            'otp': next_customer.otp,
+            'cashier_number': cashier.cashier_number,
+            'company_code': company.company_code
+        })
+    
+    return jsonify({'success': True, 'message': 'Customer marked as served'})
+
+@app.route('/api/remove_customer/<int:customer_id>', methods=['POST'])
+@login_required
+def remove_customer(customer_id):
+    customer = Customer.query.get_or_404(customer_id)
+    cashier = Cashier.query.get(customer.cashier_id)
+    
+    # Check if admin owns this company
+    company = Company.query.get(cashier.company_id)
+    if company.admin_id != int(session.get('admin_id')):
+        return jsonify({'error': 'Unauthorized access'}), 403
+    
+    # Record in history before removing
+    history_entry = QueueHistory(
+        company_id=company.id,
+        cashier_number=cashier.cashier_number,
+        otp=customer.otp,
+        join_time=customer.join_time,
+        served_time=datetime.utcnow(),
+        wait_time_seconds=int((datetime.utcnow() - customer.join_time).total_seconds()),
+        status='removed',
+        delays=customer.delays
+    )
+    db.session.add(history_entry)
+    
+    # Store position before updating customer
+    old_position = customer.position
+    logger.info(f"Removing customer {customer.otp} with position {old_position}")
+    was_serving = customer.status == 'serving'
+    
+    # Update customer status
+    customer.status = 'removed'
+    
+    # Commit the status change
+    db.session.commit()
+    
+    # Update positions for waiting customers behind this one
+    updated_customers = update_customer_positions(customer.cashier_id, old_position)
+    logger.info(f"Updated positions for {len(updated_customers)} customers")
+    
+    # If the removed customer was being served, start serving the next customer
+    if was_serving:
+        next_customer = Customer.query.filter_by(
+            cashier_id=cashier.id,
+            status='waiting',
+            position=1
+        ).first()
+        
+        if next_customer:
+            logger.info(f"Marking next customer {next_customer.otp} as serving")
+            next_customer.status = 'serving'
+            next_customer.serving_start_time = datetime.utcnow()
+            db.session.commit()
+            
+            # Emit socket event to notify the next customer
+            socketio.emit('customer_turn', {
+                'otp': next_customer.otp,
+                'cashier_number': cashier.cashier_number,
+                'company_code': company.company_code
+            })
+    
+    return jsonify({'success': True, 'message': 'Customer removed from queue'})
+
+@app.route('/api/delay_customer/<int:customer_id>', methods=['POST'])
+@login_required
+def delay_customer(customer_id):
+    customer = Customer.query.get_or_404(customer_id)
+    cashier = Cashier.query.get(customer.cashier_id)
+    
+    # Check if admin owns this company
+    company = Company.query.get(cashier.company_id)
+    if company.admin_id != int(session.get('admin_id')):
+        return jsonify({'error': 'Unauthorized access'}), 403
+    
+    # Only allow delaying customers who are currently serving
+    if customer.status != 'serving':
+        return jsonify({'error': 'Only currently serving customers can be delayed'}), 400
+    
+    # Store the current position
+    old_position = customer.position
+    
+    # Update customer status and increment delay count
+    customer.status = 'waiting'
+    customer.delays += 1
+    customer.serving_start_time = None
+    
+    # Move the delayed customer to the end of the waiting queue
+    max_position = db.session.query(db.func.max(Customer.position)).filter(
+        Customer.cashier_id == cashier.id,
+        Customer.status == 'waiting'
+    ).scalar() or 0
+    
+    # If there are other waiting customers, position this one at the end
+    if max_position > 0:
+        customer.position = max_position + 1
+    
+    db.session.commit()
+    
+    # Emit socket event to notify all clients
+    socketio.emit('customer_delayed', {
+        'otp': customer.otp,
+        'cashier_number': cashier.cashier_number,
+        'company_code': company.company_code
+    })
+    
+    # Find the next waiting customer for this cashier
+    next_customer = Customer.query.filter_by(
+        cashier_id=cashier.id,
+        status='waiting',
+        position=1
+    ).first()
+    
+    # If there's a next customer, mark them as serving
+    if next_customer:
+        next_customer.status = 'serving'
+        next_customer.serving_start_time = datetime.utcnow()
+        db.session.commit()
+        
+        # Emit socket event to notify the next customer
+        socketio.emit('customer_turn', {
+            'otp': next_customer.otp,
+            'cashier_number': cashier.cashier_number,
+            'company_code': company.company_code
+        })
+    
+    return jsonify({'success': True, 'message': 'Customer delayed'})
+
+# Ensure application variable exists for Gunicorn
 application = app
 
-if __name__ == '__main__':
-    # Get port from environment variable
-    port = int(os.getenv('PORT', 5000))
-    print(f"Starting server on port {port}")
-    socketio.run(app, host='0.0.0.0', port=port, debug=False, allow_unsafe_werkzeug=True)
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 5000))
+    logger.info(f"Starting server on port {port}")
+    
+    try:
+        socketio.run(app, host="0.0.0.0", port=port, debug=False)
+    except Exception as e:
+        logger.error(f"Error running the server: {e}")
+        logger.error(traceback.format_exc())

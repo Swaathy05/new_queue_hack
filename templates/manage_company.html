@@ -56,6 +56,7 @@
                 <p><strong>Total Delayed:</strong> {{ stats.total_delayed }}</p>
                 <p><strong>Average Wait Time:</strong> {{ (stats.avg_wait_time / 60)|round(1) }} minutes</p>
                 <a href="{{ url_for('export_history', company_id=company.id) }}" class="btn btn-outline-primary">Export History</a>
+
             </div>
         </div>
 
@@ -245,10 +246,10 @@
                                         <small class="text-muted">Est. wait: ${estimatedWaitTime} min</small>
                                         <div>
                                             ${customer.status === 'serving' ? 
-                                            `<button class="btn btn-sm btn-success me-1 serve-btn" data-customer-id="${customer.id}">Served</button>
-                                             <button class="btn btn-sm btn-warning delay-btn" data-customer-id="${customer.id}">Delay</button>` : 
+                                            `<button class="btn btn-sm btn-success me-1 serve-btn" data-customer-id="${customer.id}" data-cashier-id="${cashierId}">Served</button>
+                                             <button class="btn btn-sm btn-warning delay-btn" data-customer-id="${customer.id}" data-cashier-id="${cashierId}">Delay</button>` : 
                                              customer.status === 'waiting' ? 
-                                             `<button class="btn btn-sm btn-danger remove-btn" data-customer-id="${customer.id}">Remove</button>` : ''}
+                                             `<button class="btn btn-sm btn-danger remove-btn" data-customer-id="${customer.id}" data-cashier-id="${cashierId}">Remove</button>` : ''}
                                         </div>
                                     </div>
                                 </div>
@@ -256,28 +257,6 @@
                         `;
                         
                         queueContainer.innerHTML += html;
-                    });
-                    
-                    // Add event listeners
-                    queueContainer.querySelectorAll('.serve-btn').forEach(btn => {
-                        btn.addEventListener('click', function() {
-                            const customerId = this.getAttribute('data-customer-id');
-                            serveCustomer(customerId);
-                        });
-                    });
-                    
-                    queueContainer.querySelectorAll('.delay-btn').forEach(btn => {
-                        btn.addEventListener('click', function() {
-                            const customerId = this.getAttribute('data-customer-id');
-                            delayCustomer(customerId);
-                        });
-                    });
-                    
-                    queueContainer.querySelectorAll('.remove-btn').forEach(btn => {
-                        btn.addEventListener('click', function() {
-                            const customerId = this.getAttribute('data-customer-id');
-                            removeCustomer(customerId);
-                        });
                     });
                 })
                 .catch(error => console.error('Error:', error));
@@ -294,63 +273,77 @@
             });
         });
         
-        // Handle serve, delay, and remove actions
-        const serveCustomer = (customerId) => {
-            fetch(`/api/serve_customer/${customerId}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                }
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    // Reload queue data for the affected cashier
-                    const cashierId = document.querySelector(`.serve-btn[data-customer-id="${customerId}"]`)
-                        .closest('.queue-container').id.replace('queue-', '');
-                    loadQueueData(cashierId);
-                }
-            })
-            .catch(error => console.error('Error:', error));
-        };
-        
-        const delayCustomer = (customerId) => {
-            fetch(`/api/delay_customer/${customerId}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                }
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    // Reload queue data for the affected cashier
-                    const cashierId = document.querySelector(`.delay-btn[data-customer-id="${customerId}"]`)
-                        .closest('.queue-container').id.replace('queue-', '');
-                    loadQueueData(cashierId);
-                }
-            })
-            .catch(error => console.error('Error:', error));
-        };
-        
-        const removeCustomer = (customerId) => {
-            fetch(`/api/remove_customer/${customerId}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                }
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    // Reload queue data for the affected cashier
-                    const cashierId = document.querySelector(`.remove-btn[data-customer-id="${customerId}"]`)
-                        .closest('.queue-container').id.replace('queue-', '');
-                    loadQueueData(cashierId);
-                }
-            })
-            .catch(error => console.error('Error:', error));
-        };
+        // Use event delegation for dynamically created buttons
+        document.addEventListener('click', function(event) {
+            // Serve button handling
+            if (event.target.classList.contains('serve-btn')) {
+                const customerId = event.target.getAttribute('data-customer-id');
+                const cashierId = event.target.getAttribute('data-cashier-id');
+                
+                fetch(`/api/serve_customer/${customerId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        console.log('Customer served successfully');
+                        loadQueueData(cashierId);
+                    } else {
+                        console.error('Error serving customer:', data.error);
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+            }
+            
+            // Delay button handling
+            if (event.target.classList.contains('delay-btn')) {
+                const customerId = event.target.getAttribute('data-customer-id');
+                const cashierId = event.target.getAttribute('data-cashier-id');
+                
+                fetch(`/api/delay_customer/${customerId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        console.log('Customer delayed successfully');
+                        loadQueueData(cashierId);
+                    } else {
+                        console.error('Error delaying customer:', data.error);
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+            }
+            
+            // Remove button handling
+            if (event.target.classList.contains('remove-btn')) {
+                const customerId = event.target.getAttribute('data-customer-id');
+                const cashierId = event.target.getAttribute('data-cashier-id');
+                
+                fetch(`/api/remove_customer/${customerId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        console.log('Customer removed successfully');
+                        loadQueueData(cashierId);
+                    } else {
+                        console.error('Error removing customer:', data.error);
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+            }
+        });
         
         // Socket events for real-time updates
         socket.on('cashier_status_change', data => {
@@ -387,6 +380,20 @@
                 const cashierId = container.id.replace('queue-', '');
                 loadQueueData(cashierId);
             });
+        });
+        
+        socket.on('queue_updated', data => {
+            console.log('Queue positions updated:', data);
+            // If we have a specific cashier_id, only update that queue
+            if (data.cashier_id) {
+                loadQueueData(data.cashier_id);
+            } else {
+                // Otherwise refresh all queues
+                document.querySelectorAll('.queue-container').forEach(container => {
+                    const cashierId = container.id.replace('queue-', '');
+                    loadQueueData(cashierId);
+                });
+            }
         });
         
         // Auto-refresh queues every 30 seconds
