@@ -17,6 +17,8 @@ from functools import wraps
 import logging
 import sys
 import traceback
+import socket
+import hashlib
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG, 
@@ -27,8 +29,16 @@ logger.info("Starting Virtual Queue System")
 
 # Initialize Flask app
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'ventic')
-logger.info(f"Using SECRET_KEY: {app.config['SECRET_KEY']}")
+secret_key = os.getenv('SECRET_KEY')
+if not secret_key:
+    # Generate a consistent secret key if not provided
+    # This ensures the key remains the same across restarts unless explicitly changed
+    host_id = socket.gethostname() if hasattr(socket, 'gethostname') else 'unknown'
+    secret_key = hashlib.sha256(host_id.encode()).hexdigest()
+    logger.info(f"Generated SECRET_KEY from hostname: {host_id[:4]}...")
+
+app.config['SECRET_KEY'] = secret_key
+logger.info(f"Using SECRET_KEY: {secret_key[:5]}...")
 
 # Configure SQLite database - use a persistent path for Railway
 DB_PATH = os.getenv('DB_PATH', 'queue_system.db')
@@ -133,6 +143,22 @@ with app.app_context():
         logger.info(f"Attempting to create database at: {DB_PATH}")
         db.create_all()
         logger.info("Database tables created successfully")
+        
+        # First-time setup - create default admin if none exists
+        admin_count = Admin.query.count()
+        if admin_count == 0:
+            # Get default credentials from environment or use defaults
+            default_username = os.getenv('DEFAULT_ADMIN_USERNAME', 'admin')
+            default_password = os.getenv('DEFAULT_ADMIN_PASSWORD', 'password')
+            
+            # Create default admin
+            default_admin = Admin(username=default_username)
+            default_admin.set_password(default_password)
+            db.session.add(default_admin)
+            db.session.commit()
+            
+            logger.info(f"Created default admin with username: {default_username}")
+            logger.info(f"IMPORTANT: Please change the default password immediately!")
     except Exception as e:
         logger.error(f"Error creating database tables: {e}")
         logger.error(f"Database path: {DB_PATH}")
@@ -248,17 +274,49 @@ def register():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
-        
-        admin = Admin.query.filter_by(username=username).first()
-        
-        if admin and admin.check_password(password):
-            session['admin_id'] = admin.id
-            flash('Logged in successfully.', 'success')
-            return redirect(url_for('dashboard'))
-        
-        flash('Invalid username or password.', 'danger')
+        try:
+            username = request.form.get('username')
+            password = request.form.get('password')
+            
+            logger.info(f"Login attempt for username: {username}")
+            
+            # Check if database is accessible
+            try:
+                # Try a simple database query to check connectivity
+                admin_count = Admin.query.count()
+                logger.info(f"Database connectivity check: {admin_count} admins found")
+            except Exception as db_error:
+                logger.error(f"Database error during login: {str(db_error)}")
+                flash('Database error. Please check server logs.', 'danger')
+                return render_template('login.html')
+            
+            # Validate input
+            if not username or not password:
+                logger.warning(f"Login failed: Missing username or password")
+                flash('Please provide both username and password.', 'danger')
+                return render_template('login.html')
+            
+            # Find admin
+            admin = Admin.query.filter_by(username=username).first()
+            
+            if not admin:
+                logger.warning(f"Login failed: Username {username} not found")
+                flash('Invalid username or password.', 'danger')
+                return render_template('login.html')
+            
+            # Check password
+            if admin.check_password(password):
+                session['admin_id'] = admin.id
+                logger.info(f"Login successful for {username}")
+                flash('Logged in successfully.', 'success')
+                return redirect(url_for('dashboard'))
+            else:
+                logger.warning(f"Login failed: Invalid password for {username}")
+                flash('Invalid username or password.', 'danger')
+        except Exception as e:
+            logger.error(f"Error during login: {str(e)}")
+            logger.error(traceback.format_exc())
+            flash('An error occurred during login. Please try again.', 'danger')
     
     return render_template('login.html')
 
