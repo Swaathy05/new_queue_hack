@@ -43,7 +43,7 @@ def setup_database():
     DATABASE_URL = os.getenv('DATABASE_URL')
     if not DATABASE_URL:
         # Fallback to SQLite for local development
-        DB_PATH = os.getenv('DB_PATH', 'queue_system.db')
+        DB_PATH = os.getenv('DB_PATH', '/app/data/queue_system.db')
         db_dir = os.path.dirname(DB_PATH)
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
