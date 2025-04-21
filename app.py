@@ -468,17 +468,13 @@ def manage_company(company_id):
 @login_required
 def export_history(company_id):
     company = Company.query.get_or_404(company_id)
-
     if company.admin_id != session.get('admin_id'):
         flash("Unauthorized access", "danger")
         return redirect(url_for('dashboard'))
-
     history = QueueHistory.query.filter_by(company_id=company_id).all()
-
     output = BytesIO()
     writer = csv.writer(output)
     writer.writerow(['Cashier Number', 'OTP', 'Join Time', 'Served Time', 'Wait Time (s)', 'Status', 'Delays'])
-
     for entry in history:
         writer.writerow([
             entry.cashier_number,
@@ -489,15 +485,13 @@ def export_history(company_id):
             entry.status,
             entry.delays
         ])
-
     output.seek(0)
-    return (
-        output.getvalue(),
-        200,
-        {
-            'Content-Type': 'text/csv',
-            'Content-Disposition': f'attachment; filename=queue_history_{company_id}.csv'
-        }
+    # Use send_file to properly serve the bytes as a file
+    return send_file(
+        BytesIO(output.getvalue()),
+        mimetype='text/csv',
+        as_attachment=True,
+        attachment_filename=f'queue_history_{company_id}.csv'
     )
 
 @app.route('/api/get_cashier_queue/<int:cashier_id>')
