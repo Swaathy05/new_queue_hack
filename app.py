@@ -40,27 +40,35 @@ if not secret_key:
 app.config['SECRET_KEY'] = secret_key
 logger.info(f"Using SECRET_KEY: {secret_key[:5]}...")
 
-# Configure SQLite database - use a persistent path for Railway
-# Configure SQLite database - use a persistent path for Railway
-DB_PATH = os.getenv('DB_PATH', '/data/queue_system.db')  # Default to /data/queue_system.db
+# Configure SQLite database with better path handling
+DB_DIR = os.getenv('DB_DIR', 'data')  # Default directory
+DB_NAME = os.getenv('DB_NAME', 'queue_system.db')
+DB_PATH = os.path.join(DB_DIR, DB_NAME)
 
 # Ensure database directory exists
-db_dir = os.path.dirname(DB_PATH)
-if db_dir and not os.path.exists(db_dir):
+if not os.path.exists(DB_DIR):
     try:
-        os.makedirs(db_dir, exist_ok=True)
-        logger.info(f"Created database directory: {db_dir}")
+        os.makedirs(DB_DIR, exist_ok=True)
+        logger.info(f"Created database directory: {DB_DIR}")
     except Exception as e:
-        logger.error(f"Error creating database directory {db_dir}: {e}")
+        logger.error(f"Error creating database directory {DB_DIR}: {e}")
+        # Fallback to current directory if cannot create data dir
+        DB_DIR = '.'
+        DB_PATH = os.path.join(DB_DIR, DB_NAME)
+        logger.info(f"Using current directory for database: {DB_PATH}")
 
 app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{DB_PATH}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 logger.info(f"Database URI: {app.config['SQLALCHEMY_DATABASE_URI']}")
-
-# Initialize extensions
+# Initialize extensions with better error handling
 try:
     db = SQLAlchemy(app)
     logger.info("SQLAlchemy initialized")
+    
+    # Test database connection
+    with app.app_context():
+        db.engine.connect()
+        logger.info("Database connection test successful")
     
     # Update SocketIO initialization for better compatibility
     socketio = SocketIO(
@@ -68,12 +76,14 @@ try:
         cors_allowed_origins="*", 
         async_mode='gevent',
         logger=True,
-        engineio_logger=True  # Enable more detailed logging
+        engineio_logger=True
     )
     logger.info("SocketIO initialized with async_mode='gevent'")
 except Exception as e:
     logger.error(f"Error initializing extensions: {e}")
     logger.error(traceback.format_exc())
+    logger.error(f"Current working directory: {os.getcwd()}")
+    logger.error(f"Directory listing: {os.listdir('.')}")
 
 # Error handler for all exceptions
 @app.errorhandler(Exception)
@@ -286,6 +296,19 @@ def login():
                 # Try a simple database query to check connectivity
                 admin_count = Admin.query.count()
                 logger.info(f"Database connectivity check: {admin_count} admins found")
+                
+                if admin_count == 0:
+                    # No admins in database, create default one
+                    logger.warning("No admins found in database, creating default admin")
+                    default_username = os.getenv('DEFAULT_ADMIN_USERNAME', 'admin')
+                    default_password = os.getenv('DEFAULT_ADMIN_PASSWORD', 'password')
+                    
+                    default_admin = Admin(username=default_username)
+                    default_admin.set_password(default_password)
+                    db.session.add(default_admin)
+                    db.session.commit()
+                    
+                    flash(f'Created default admin "{default_username}" - please log in.', 'info')
             except Exception as db_error:
                 logger.error(f"Database error during login: {str(db_error)}")
                 flash('Database error. Please check server logs.', 'danger')
@@ -308,6 +331,9 @@ def login():
             # Check password
             if admin.check_password(password):
                 session['admin_id'] = admin.id
+                session.permanent = True  # Make session last longer
+                app.permanent_session_lifetime = timedelta(days=1)  # Set session lifetime
+                
                 logger.info(f"Login successful for {username}")
                 flash('Logged in successfully.', 'success')
                 return redirect(url_for('dashboard'))
@@ -320,7 +346,6 @@ def login():
             flash('An error occurred during login. Please try again.', 'danger')
     
     return render_template('login.html')
-
 @app.route('/logout')
 def logout():
     session.pop('admin_id', None)
@@ -467,32 +492,57 @@ def manage_company(company_id):
 @app.route('/export/<int:company_id>')
 @login_required
 def export_history(company_id):
-    company = Company.query.get_or_404(company_id)
-    if company.admin_id != session.get('admin_id'):
-        flash("Unauthorized access", "danger")
-        return redirect(url_for('dashboard'))
-    history = QueueHistory.query.filter_by(company_id=company_id).all()
-    output = BytesIO()
-    writer = csv.writer(output)
-    writer.writerow(['Cashier Number', 'OTP', 'Join Time', 'Served Time', 'Wait Time (s)', 'Status', 'Delays'])
-    for entry in history:
-        writer.writerow([
-            entry.cashier_number,
-            entry.otp,
-            entry.join_time.strftime('%Y-%m-%d %H:%M:%S'),
-            entry.served_time.strftime('%Y-%m-%d %H:%M:%S') if entry.served_time else '',
-            entry.wait_time_seconds or '',
-            entry.status,
-            entry.delays
-        ])
-    output.seek(0)
-    # Use send_file to properly serve the bytes as a file
-    return send_file(
-        BytesIO(output.getvalue()),
-        mimetype='text/csv',
-        as_attachment=True,
-        download_name=f'queue_history_{company_id}.csv'  # Changed from attachment_filename
-    )
+    try:
+        company = Company.query.get_or_404(company_id)
+        if company.admin_id != int(session.get('admin_id')):
+            flash("Unauthorized access", "danger")
+            return redirect(url_for('dashboard'))
+        
+        history = QueueHistory.query.filter_by(company_id=company_id).all()
+        
+        if not history:
+            flash("No history data available to export", "info")
+            return redirect(url_for('manage_company', company_id=company_id))
+        
+        # Create CSV in memory
+        output = BytesIO()
+        writer = csv.writer(output)
+        writer.writerow(['Cashier Number', 'OTP', 'Join Time', 'Served Time', 'Wait Time (s)', 'Status', 'Delays'])
+        
+        for entry in history:
+            writer.writerow([
+                entry.cashier_number,
+                entry.otp,
+                entry.join_time.strftime('%Y-%m-%d %H:%M:%S'),
+                entry.served_time.strftime('%Y-%m-%d %H:%M:%S') if entry.served_time else '',
+                entry.wait_time_seconds or '',
+                entry.status,
+                entry.delays
+            ])
+        
+        # Reset the pointer to beginning of file
+        output.seek(0)
+        
+        # Use send_file to properly serve the bytes as a file
+        response = send_file(
+            BytesIO(output.getvalue()),
+            mimetype='text/csv',
+            as_attachment=True,
+            download_name=f'queue_history_{company_id}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+        )
+        
+        # Set additional headers to prevent caching
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error in export_history: {str(e)}")
+        logger.error(traceback.format_exc())
+        flash(f"Error exporting history: {str(e)}", "danger")
+        return redirect(url_for('manage_company', company_id=company_id))
 
 @app.route('/api/get_cashier_queue/<int:cashier_id>')
 @login_required
@@ -1031,7 +1081,33 @@ def remove_customer(customer_id):
     })
     
     return jsonify({'success': True, 'message': 'Customer removed from queue'})
-
+@app.route('/api/db-health')
+def db_health():
+    try:
+        # Try to make a simple query
+        admin_count = Admin.query.count()
+        company_count = Company.query.count()
+        history_count = QueueHistory.query.count()
+        
+        return jsonify({
+            "status": "Database is connected",
+            "admin_count": admin_count,
+            "company_count": company_count,
+            "history_count": history_count,
+            "db_path": DB_PATH,
+            "db_exists": os.path.exists(DB_PATH),
+            "db_size_bytes": os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else 0,
+            "timestamp": datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            "status": "Database error",
+            "error": str(e),
+            "db_path": DB_PATH,
+            "db_exists": os.path.exists(DB_PATH) if DB_PATH else False,
+            "timestamp": datetime.utcnow().isoformat()
+        }), 500
+        
 @app.route('/api/delay_customer/<int:customer_id>', methods=['POST'])
 @login_required
 def delay_customer(customer_id):
