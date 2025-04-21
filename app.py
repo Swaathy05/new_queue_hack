@@ -1,5 +1,5 @@
 # app.py - Main application file using SQLite for reliability
-
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, render_template_string, send_file
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, render_template_string
 from flask_sqlalchemy import SQLAlchemy
 from flask_socketio import SocketIO, emit
@@ -491,7 +491,7 @@ def export_history(company_id):
         BytesIO(output.getvalue()),
         mimetype='text/csv',
         as_attachment=True,
-        attachment_filename=f'queue_history_{company_id}.csv'
+        download_name=f'queue_history_{company_id}.csv'  # Changed from attachment_filename
     )
 
 @app.route('/api/get_cashier_queue/<int:cashier_id>')
