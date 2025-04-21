@@ -41,7 +41,8 @@ app.config['SECRET_KEY'] = secret_key
 logger.info(f"Using SECRET_KEY: {secret_key[:5]}...")
 
 # Configure SQLite database - use a persistent path for Railway
-DB_PATH = os.getenv('DB_PATH', 'queue_system.db')
+# Configure SQLite database - use a persistent path for Railway
+DB_PATH = os.getenv('DB_PATH', '/data/queue_system.db')  # Default to /data/queue_system.db
 
 # Ensure database directory exists
 db_dir = os.path.dirname(DB_PATH)
