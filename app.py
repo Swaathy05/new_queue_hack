@@ -41,7 +41,8 @@ app.config['SECRET_KEY'] = secret_key
 logger.info(f"Using SECRET_KEY: {secret_key[:5]}...")
 
 # Configure SQLite database with better path handling
-DB_DIR = os.getenv('DB_DIR', 'data')  # Default directory
+# Configure SQLite database with better path handling
+DB_DIR = os.getenv('DB_DIR', os.path.join(os.getcwd(), 'data'))  # Default to 'data' directory in current working directory
 DB_NAME = os.getenv('DB_NAME', 'queue_system.db')
 DB_PATH = os.path.join(DB_DIR, DB_NAME)
 
@@ -53,7 +54,7 @@ if not os.path.exists(DB_DIR):
     except Exception as e:
         logger.error(f"Error creating database directory {DB_DIR}: {e}")
         # Fallback to current directory if cannot create data dir
-        DB_DIR = '.'
+        DB_DIR = os.getcwd()
         DB_PATH = os.path.join(DB_DIR, DB_NAME)
         logger.info(f"Using current directory for database: {DB_PATH}")
 
