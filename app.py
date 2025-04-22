@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import json
 import os
 import qrcode
-from io import BytesIO
+from io import BytesIO, StringIO
 import base64
 import csv
 import secrets
@@ -477,35 +477,43 @@ def manage_company(company_id):
 @app.route('/export/<int:company_id>')
 @login_required
 def export_history(company_id):
-    company = Company.query.get_or_404(company_id)
+    try:
+        company = Company.query.get_or_404(company_id)
 
-    if company.admin_id != session.get('admin_id'):
-        flash("Unauthorized access", "danger")
-        return redirect(url_for('dashboard'))
+        if company.admin_id != session.get('admin_id'):
+            flash("Unauthorized access", "danger")
+            return redirect(url_for('dashboard'))
 
-    history = QueueHistory.query.filter_by(company_id=company_id).all()
+        history = QueueHistory.query.filter_by(company_id=company_id).all()
 
-    output = BytesIO()
-    writer = csv.writer(output)
-    writer.writerow(['Cashier Number', 'OTP', 'Join Time', 'Served Time', 'Wait Time (s)', 'Status', 'Delays'])
+        # Create string buffer and write CSV data
+        string_buffer = StringIO()
+        writer = csv.writer(string_buffer)
+        writer.writerow(['Cashier Number', 'OTP', 'Join Time', 'Served Time', 'Wait Time (s)', 'Status', 'Delays'])
 
-    for entry in history:
-        writer.writerow([
-            entry.cashier_number,
-            entry.otp,
-            entry.join_time.strftime('%Y-%m-%d %H:%M:%S'),
-            entry.served_time.strftime('%Y-%m-%d %H:%M:%S') if entry.served_time else '',
-            entry.wait_time_seconds or '',
-            entry.status,
-            entry.delays
-        ])
+        for entry in history:
+            writer.writerow([
+                entry.cashier_number,
+                entry.otp,
+                entry.join_time.strftime('%Y-%m-%d %H:%M:%S'),
+                entry.served_time.strftime('%Y-%m-%d %H:%M:%S') if entry.served_time else '',
+                entry.wait_time_seconds or '',
+                entry.status,
+                entry.delays
+            ])
 
-    # Get the value and encode it
-    output.seek(0)
-    response = make_response(output.getvalue())
-    response.headers['Content-Type'] = 'text/csv'
-    response.headers['Content-Disposition'] = f'attachment; filename=queue_history_{company_id}.csv'
-    return response
+        # Get the string value and encode it to bytes
+        output = string_buffer.getvalue().encode('utf-8')
+        
+        response = make_response(output)
+        response.headers['Content-Type'] = 'text/csv'
+        response.headers['Content-Disposition'] = f'attachment; filename=queue_history_{company_id}.csv'
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error in export_history: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": "Internal Server Error", "details": str(e)}), 500
 
 @app.route('/api/get_cashier_queue/<int:cashier_id>')
 @login_required
