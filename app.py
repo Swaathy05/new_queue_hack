@@ -40,12 +40,14 @@ if not secret_key:
 app.config['SECRET_KEY'] = secret_key
 logger.info(f"Using SECRET_KEY: {secret_key[:5]}...")
 
-# Configure SQLite database - use a persistent path for Railway
-DB_PATH = os.getenv('DATABASE_URL', os.getenv('DB_PATH', 'queue_system.db'))
-
-# If it's a relative path, make it absolute using the current directory
-if not os.path.isabs(DB_PATH):
-    DB_PATH = os.path.join(os.getcwd(), DB_PATH)
+# Configure SQLite database with deployment-friendly paths
+DB_PATH = os.getenv('DATABASE_URL')  # First try DATABASE_URL
+if not DB_PATH:
+    # If DATABASE_URL is not set, construct a path in the data directory
+    data_dir = os.path.join(os.getcwd(), 'data')
+    os.makedirs(data_dir, exist_ok=True)
+    DB_PATH = os.path.join(data_dir, 'queue_system.db')
+    logger.info(f"Using default database path: {DB_PATH}")
 
 # If it's a SQLite URL, extract the path
 if DB_PATH.startswith('sqlite:///'):
@@ -53,7 +55,7 @@ if DB_PATH.startswith('sqlite:///'):
 
 # Ensure database directory exists
 db_dir = os.path.dirname(DB_PATH)
-if db_dir and not os.path.exists(db_dir):
+if db_dir:
     try:
         os.makedirs(db_dir, exist_ok=True)
         logger.info(f"Created database directory: {db_dir}")
@@ -62,7 +64,7 @@ if db_dir and not os.path.exists(db_dir):
 
 app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{DB_PATH}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-logger.info(f"Database URI: {app.config['SQLALCHEMY_DATABASE_URI']}")
+logger.info(f"Final database URI: {app.config['SQLALCHEMY_DATABASE_URI']}")
 
 # Initialize extensions
 try:
