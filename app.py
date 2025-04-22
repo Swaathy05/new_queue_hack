@@ -10,7 +10,6 @@ from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, request, jsonify, render_template, session, redirect, url_for, flash, send_file
 from flask_socketio import SocketIO
-from database import init_db, get_db
 from models import Admin, Company, Cashier, Customer, QueueHistory
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
@@ -92,7 +91,15 @@ def setup_database():
     return db
 
 # Initialize database
-db = setup_database()
+try:
+    db = setup_database()
+    logger.info("Database setup completed successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize database: {e}")
+    logger.error(traceback.format_exc())
+    # Don't raise here to allow the application to start even if database fails
+    # This is important for container health checks
+    db = None
 
 # Initialize SocketIO
 socketio = SocketIO(app, cors_allowed_origins="*")
