@@ -1,6 +1,6 @@
 # app.py - Main application file using SQLite for reliability
 
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, render_template_string
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, render_template_string, make_response
 from flask_sqlalchemy import SQLAlchemy
 from flask_socketio import SocketIO, emit
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -500,15 +500,12 @@ def export_history(company_id):
             entry.delays
         ])
 
+    # Get the value and encode it
     output.seek(0)
-    return (
-        output.getvalue(),
-        200,
-        {
-            'Content-Type': 'text/csv',
-            'Content-Disposition': f'attachment; filename=queue_history_{company_id}.csv'
-        }
-    )
+    response = make_response(output.getvalue())
+    response.headers['Content-Type'] = 'text/csv'
+    response.headers['Content-Disposition'] = f'attachment; filename=queue_history_{company_id}.csv'
+    return response
 
 @app.route('/api/get_cashier_queue/<int:cashier_id>')
 @login_required
