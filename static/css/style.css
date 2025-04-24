@@ -133,4 +133,380 @@ body {
         box-shadow: none;
         border: 1px solid #ddd;
     }
+}
+
+/* Common styles for Virtual Queue System */
+:root {
+    --primary: #0A1C3F;
+    --primary-dark: #06122A;
+    --secondary: #800020;
+    --accent: #D4AF37;
+    --text: #333333;
+    --text-light: #666666;
+    --background: #F9F9F5;
+    --dark-card: #1e1e1e;
+    --dark-input: #2a2a2a;
+    --dark-border: #333333;
+    --box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+    --gradient-start: #0A1C3F;
+    --gradient-end: #800020;
+    --border-radius: 20px;
+    --success-bg: rgba(34, 197, 94, 0.1);
+    --success-border: #22c55e;
+}
+
+/* Global styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Quicksand', 'Segoe UI', sans-serif;
+}
+
+body {
+    background-color: var(--background);
+    background-image: 
+        radial-gradient(rgba(10, 28, 63, 0.08) 1px, transparent 1px),
+        radial-gradient(rgba(10, 28, 63, 0.04) 1px, transparent 1px);
+    background-size: 40px 40px;
+    background-position: 0 0, 20px 20px;
+    min-height: 100vh;
+    padding: 20px;
+}
+
+/* Animations */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes zoomIn {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+/* Common Components */
+.btn {
+    padding: 12px 25px;
+    border-radius: 25px;
+    font-size: 15px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: pointer;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, var(--secondary), #5A0018);
+    color: white;
+    border: none;
+    box-shadow: 0 4px 10px rgba(128, 0, 32, 0.3);
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 15px rgba(128, 0, 32, 0.4);
+}
+
+/* Alert styles */
+.alert {
+    padding: 15px;
+    border-radius: 12px;
+    margin-bottom: 15px;
+    position: relative;
+    animation: fadeIn 0.5s ease-out;
+}
+
+.alert-danger {
+    background-color: rgba(239, 68, 68, 0.1);
+    border-left: 4px solid #ef4444;
+    color: #b91c1c;
+}
+
+.alert-success {
+    background-color: var(--success-bg);
+    border-left: 4px solid var(--success-border);
+    color: #15803d;
+}
+
+.alert-info {
+    background-color: rgba(59, 130, 246, 0.1);
+    border-left: 4px solid #3b82f6;
+    color: #1d4ed8;
+}
+
+/* Form styles */
+.form-group {
+    margin-bottom: 1.5rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: var(--text);
+    font-weight: 500;
+}
+
+.input-group {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.input-group i {
+    position: absolute;
+    left: 15px;
+    color: var(--text-light);
+}
+
+.form-control {
+    width: 100%;
+    padding: 0.75rem 1rem 0.75rem 2.5rem;
+    border: 2px solid #ddd;
+    border-radius: 0.5rem;
+    font-size: 1rem;
+    transition: all 0.3s ease;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(212, 175, 55, 0.15);
+}
+
+/* Responsive utilities */
+@media (max-width: 768px) {
+    .container {
+        padding: 15px;
+    }
+    
+    .btn {
+        padding: 10px 20px;
+        font-size: 14px;
+    }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --background: #121212;
+        --text: #ffffff;
+        --text-light: #a0a0a0;
+    }
+    
+    .form-control {
+        background-color: var(--dark-input);
+        border-color: var(--dark-border);
+        color: var(--text);
+    }
+}
+
+/* Base Styles */
+@import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&family=Playfair+Display:wght@700&display=swap');
+
+:root {
+    /* Colors */
+    --primary: #0A1C3F;
+    --primary-dark: #06122A;
+    --secondary: #800020;
+    --accent: #D4AF37;
+    --text: #333333;
+    --text-light: #666666;
+    --background: #F9F9F5;
+    
+    /* Effects */
+    --box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    --gradient-start: #0A1C3F;
+    --gradient-end: #800020;
+    --border-radius: 12px;
+    
+    /* Typography */
+    --font-primary: 'Quicksand', sans-serif;
+    --font-display: 'Playfair Display', serif;
+}
+
+/* Global Styles */
+body {
+    font-family: var(--font-primary);
+    background-color: var(--background);
+    background-image: radial-gradient(rgba(10, 28, 63, 0.06) 1px, transparent 1px),
+                     radial-gradient(rgba(10, 28, 63, 0.03) 1px, transparent 1px);
+    background-size: 50px 50px;
+    background-position: 0 0, 25px 25px;
+    min-height: 100vh;
+    padding: 20px;
+    animation: fadeIn 0.6s ease-in;
+}
+
+/* Navigation */
+.navbar {
+    background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    border-radius: var(--border-radius) var(--border-radius) 0 0;
+}
+
+.navbar-brand {
+    font-family: var(--font-display);
+    font-size: 24px;
+    font-weight: 700;
+    color: white;
+    transition: color 0.3s ease;
+}
+
+.navbar-brand:hover {
+    color: var(--accent);
+}
+
+.navbar-nav .nav-link {
+    color: white;
+    font-weight: 600;
+    transition: color 0.3s ease, background-color 0.3s ease;
+    padding: 10px 15px;
+    border-radius: 20px;
+}
+
+.navbar-nav .nav-link:hover {
+    color: var(--accent);
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Layout */
+.container {
+    padding-top: 30px;
+    padding-bottom: 30px;
+    position: relative;
+    z-index: 1;
+}
+
+/* Alerts */
+.alert {
+    border-radius: var(--border-radius);
+    margin-bottom: 20px;
+    font-weight: 500;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.alert-success {
+    background-color: rgba(25, 135, 84, 0.1);
+    border-color: #198754;
+    color: #198754;
+}
+
+.alert-danger {
+    background-color: rgba(220, 53, 69, 0.1);
+    border-color: #dc3545;
+    color: #dc3545;
+}
+
+.alert-info {
+    background-color: rgba(13, 202, 240, 0.1);
+    border-color: #0dcaf0;
+    color: #0dcaf0;
+}
+
+/* Animations */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .navbar-brand {
+        font-size: 20px;
+    }
+    .navbar-nav .nav-link {
+        padding: 8px 12px;
+    }
+    .container {
+        padding-top: 20px;
+        padding-bottom: 20px;
+    }
+}
+
+/* Forms */
+.form-control {
+    border-radius: var(--border-radius);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    padding: 12px;
+    transition: all 0.3s ease;
+}
+
+.form-control:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(10, 28, 63, 0.1);
+}
+
+/* Buttons */
+.btn {
+    border-radius: var(--border-radius);
+    padding: 10px 20px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+    border: none;
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(10, 28, 63, 0.2);
+}
+
+/* Cards */
+.card {
+    border-radius: var(--border-radius);
+    border: none;
+    box-shadow: var(--box-shadow);
+    transition: transform 0.3s ease;
+}
+
+.card:hover {
+    transform: translateY(-5px);
+}
+
+/* Tables */
+.table {
+    border-radius: var(--border-radius);
+    overflow: hidden;
+}
+
+.table thead th {
+    background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+    color: white;
+    border: none;
+}
+
+/* Dark Mode Support */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --background: #1a1a1a;
+        --text: #ffffff;
+        --text-light: #cccccc;
+    }
+
+    body {
+        background-image: radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                         radial-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+    }
+
+    .card {
+        background-color: #2d2d2d;
+        color: var(--text);
+    }
+
+    .form-control {
+        background-color: #2d2d2d;
+        color: var(--text);
+        border-color: rgba(255, 255, 255, 0.1);
+    }
+
+    .form-control:focus {
+        background-color: #363636;
+    }
 } 

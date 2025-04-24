@@ -40,44 +40,35 @@ if not secret_key:
 app.config['SECRET_KEY'] = secret_key
 logger.info(f"Using SECRET_KEY: {secret_key[:5]}...")
 
-# Configure SQLite database with deployment-friendly paths
-DB_PATH = os.getenv('DATABASE_URL')  # First try DATABASE_URL
-if not DB_PATH:
-    # If DATABASE_URL is not set, construct a path in the data directory
-    data_dir = os.path.join(os.getcwd(), 'data')
+# Configure database with PostgreSQL support for persistence
+DATABASE_URL = os.getenv('DATABASE_URL')
+if DATABASE_URL and DATABASE_URL.startswith('postgres://'):
+    # Replace postgres:// with postgresql:// for SQLAlchemy
+    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+    logger.info("Using PostgreSQL database")
+else:
+    # Fallback to SQLite with persistent storage
+    data_dir = os.path.join(os.getcwd(), 'persistent_data')
     os.makedirs(data_dir, exist_ok=True)
     DB_PATH = os.path.join(data_dir, 'queue_system.db')
-    logger.info(f"Using default database path: {DB_PATH}")
+    app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{DB_PATH}'
+    logger.info(f"Using SQLite database at: {DB_PATH}")
 
-# If it's a SQLite URL, extract the path
-if DB_PATH.startswith('sqlite:///'):
-    DB_PATH = DB_PATH[10:]
-
-# Ensure database directory exists
-db_dir = os.path.dirname(DB_PATH)
-if db_dir:
-    try:
-        os.makedirs(db_dir, exist_ok=True)
-        logger.info(f"Created database directory: {db_dir}")
-    except Exception as e:
-        logger.error(f"Error creating database directory {db_dir}: {e}")
-
-app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{DB_PATH}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-logger.info(f"Final database URI: {app.config['SQLALCHEMY_DATABASE_URI']}")
+logger.info(f"Database URI: {app.config['SQLALCHEMY_DATABASE_URI']}")
 
 # Initialize extensions
 try:
     db = SQLAlchemy(app)
-    logger.info("SQLAlchemy initialized")
+    logger.info("SQLAlchemy initialized successfully")
     
-    # Update SocketIO initialization for better compatibility
     socketio = SocketIO(
         app, 
         cors_allowed_origins="*", 
         async_mode='gevent',
         logger=True,
-        engineio_logger=True  # Enable more detailed logging
+        engineio_logger=True
     )
     logger.info("SocketIO initialized with async_mode='gevent'")
 except Exception as e:
@@ -150,9 +141,9 @@ class QueueHistory(db.Model):
 # Create database tables at startup
 with app.app_context():
     try:
-        logger.info(f"Attempting to create database at: {DB_PATH}")
+        logger.info("Attempting to create/verify database tables...")
         db.create_all()
-        logger.info("Database tables created successfully")
+        logger.info("Database tables verified/created successfully")
         
         # First-time setup - create default admin if none exists
         admin_count = Admin.query.count()
@@ -168,12 +159,11 @@ with app.app_context():
             db.session.commit()
             
             logger.info(f"Created default admin with username: {default_username}")
-            logger.info(f"IMPORTANT: Please change the default password immediately!")
+            logger.info("IMPORTANT: Please change the default password immediately!")
+        else:
+            logger.info(f"Found {admin_count} existing admin user(s)")
     except Exception as e:
-        logger.error(f"Error creating database tables: {e}")
-        logger.error(f"Database path: {DB_PATH}")
-        logger.error(f"Directory exists: {os.path.exists(os.path.dirname(DB_PATH)) if os.path.dirname(DB_PATH) else 'Using current directory'}")
-        logger.error(f"Directory writable: {os.access(os.path.dirname(DB_PATH), os.W_OK) if os.path.dirname(DB_PATH) else 'Unknown'}")
+        logger.error(f"Database initialization error: {e}")
         logger.error(traceback.format_exc())
 
 # Helper Functions
